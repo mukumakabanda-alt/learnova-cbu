@@ -1,10 +1,10 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
-import { findCourse, materialTypeMeta } from "@/lib/mock-data";
+import { findCourse, materialTypeMeta, type Course, type Material } from "@/lib/mock-data";
 import { ArrowLeft, Bookmark, Download, FileText, Sparkles, CheckCircle2, ListChecks, Lightbulb } from "lucide-react";
 
 export const Route = createFileRoute("/courses/$code")({
-  loader: ({ params }) => {
+  loader: ({ params }): { course: Course } => {
     const course = findCourse(params.code);
     if (!course) throw notFound();
     return { course };
@@ -69,7 +69,7 @@ function CoursePage() {
         <div>
           <h2 className="font-display text-2xl text-foreground">Materials</h2>
           <div className="mt-4 grid gap-3">
-            {course.materials.map((m) => (
+            {course.materials.map((m: Material) => (
               <div key={m.id} className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
                 <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
                 <div className="min-w-0 flex-1">
@@ -89,7 +89,7 @@ function CoursePage() {
 
           <h2 className="mt-10 font-display text-2xl text-foreground">Course outline</h2>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {course.topics.map((t, i) => (
+            {course.topics.map((t: string, i: number) => (
               <div key={t} className="flex items-start gap-3 rounded-xl border border-border bg-card p-3">
                 <div className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary">{String(i + 1).padStart(2, "0")}</div>
                 <div className="text-sm font-medium text-foreground">{t}</div>
