@@ -4,13 +4,8 @@ import { SearchBar } from "@/components/SearchBar";
 import { CourseCard } from "@/components/CourseCard";
 import { courses } from "@/lib/mock-data";
 import { SearchX } from "lucide-react";
-import { z } from "zod";
-import { zodValidator } from "@tanstack/zod-adapter";
-
-const searchSchema = z.object({ q: z.string().optional().default("") });
-
 export const Route = createFileRoute("/search")({
-  validateSearch: zodValidator(searchSchema),
+  validateSearch: (search: Record<string, unknown>) => ({ q: (search.q as string) ?? "" }),
   head: () => ({
     meta: [
       { title: "Search — Learnova" },
