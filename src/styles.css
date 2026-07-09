@@ -149,4 +149,55 @@
 @utility card-hover-active {
   transform: translateY(-3px);
   box-shadow: var(--shadow-soft);
-    }
+}
+
+/*
+  Hero refinements — three self-contained motion pieces:
+  1. The gallery band's continuous marquee (doubled track, -50% loop).
+  2. The tilt-card's idle float (lives on a wrapper, never on the same
+     element as the pointer-driven rotateX/rotateY, so they don't collide).
+  3. The background "floating academic glyphs" — three distinct drifts
+     so four on-screen instances never sync into an obvious pattern.
+  All of it stops dead under prefers-reduced-motion.
+*/
+@keyframes hero-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.hero-marquee-track {
+  animation: hero-marquee 50s linear infinite;
+}
+
+@keyframes hero-card-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.animate-float {
+  animation: hero-card-float 6s ease-in-out infinite;
+}
+
+@keyframes hero-float-a {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate3d(0.4, 1, 0.1, 32deg); }
+  50% { transform: translate3d(6px, -16px, 0) rotate3d(0.4, 1, 0.1, 40deg); }
+}
+@keyframes hero-float-b {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate3d(0.2, -1, 0.3, -26deg); }
+  50% { transform: translate3d(-8px, 14px, 0) rotate3d(0.2, -1, 0.3, -34deg); }
+}
+@keyframes hero-float-c {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate3d(-0.3, 1, 0.2, 18deg); }
+  50% { transform: translate3d(5px, -12px, 0) rotate3d(-0.3, 1, 0.2, 10deg); }
+}
+.animate-hero-float-a { animation: hero-float-a 9s ease-in-out infinite; }
+.animate-hero-float-b { animation: hero-float-b 11s ease-in-out infinite; }
+.animate-hero-float-c { animation: hero-float-c 8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-marquee-track,
+  .animate-float,
+  .animate-hero-float-a,
+  .animate-hero-float-b,
+  .animate-hero-float-c {
+    animation: none !important;
+  }
+  }
