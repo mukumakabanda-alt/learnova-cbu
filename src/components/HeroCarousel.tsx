@@ -5,17 +5,29 @@ import campusGate from "@/assets/campus-gate.asset.json";
 import campusGarden from "@/assets/campus-garden.asset.json";
 import campusQuad from "@/assets/campus-quad.asset.json";
 import graduation from "@/assets/graduation.asset.json";
+import cbuGateDay from "@/assets/cbu-gate-day.jpg.asset.json";
+import cbuLawn from "@/assets/cbu-lawn.jpg.asset.json";
+import cbuSunset from "@/assets/cbu-sunset.jpg.asset.json";
+import cbuGateNight from "@/assets/cbu-gate-night.jpg.asset.json";
+import cbuCourtyard from "@/assets/cbu-courtyard.jpg.asset.json";
+import cbuMainBuilding from "@/assets/cbu-main-building.jpg.asset.json";
+import cbuPalm from "@/assets/cbu-palm.jpg.asset.json";
 
 const SLIDES = [
-  { img: campusQuad, caption: "Riverside Campus, Kitwe" },
-  { img: campusBuildings, caption: "Lecture halls & labs" },
-  { img: campusGate, caption: "Main gate" },
-  { img: campusGarden, caption: "Campus grounds" },
-  { img: graduation, caption: "Graduation day" },
+  cbuGateDay,
+  campusQuad,
+  cbuLawn,
+  cbuSunset,
+  campusBuildings,
+  cbuCourtyard,
+  cbuMainBuilding,
+  campusGate,
+  cbuPalm,
+  campusGarden,
+  cbuGateNight,
+  graduation,
 ];
 
-// Full-bleed autoplaying backdrop for the hero. Plain setInterval + Embla's
-// own API — no autoplay plugin dependency needed.
 export function HeroCarousel() {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
   const [selected, setSelected] = useState(0);
@@ -37,17 +49,24 @@ export function HeroCarousel() {
         <div className="flex h-full">
           {SLIDES.map((s, i) => (
             <div key={i} className="relative h-full min-w-0 flex-[0_0_100%]">
-              <img src={s.img.url} alt="" className="h-full w-full object-cover" />
+              <img
+                src={s.url}
+                alt=""
+                loading={i === 0 ? "eager" : "lazy"}
+                className="h-full w-full object-cover"
+              />
             </div>
           ))}
         </div>
       </div>
-      {/* scrim so hero copy stays legible over any photo */}
       <div className="absolute inset-0 bg-hero opacity-90" />
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
       <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
         {SLIDES.map((_, i) => (
-          <span key={i} className={`h-1.5 rounded-full transition-all ${i === selected ? "w-5 bg-gold" : "w-1.5 bg-white/30"}`} />
+          <span
+            key={i}
+            className={`h-1.5 rounded-full transition-all ${i === selected ? "w-5 bg-gold" : "w-1.5 bg-white/30"}`}
+          />
         ))}
       </div>
     </div>
