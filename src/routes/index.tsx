@@ -74,21 +74,34 @@ function Home() {
     <div className="min-h-screen bg-background pb-20">
       <SiteHeader />
 
-      {/* HERO — carousel behind, real 3D tilt card up front */}
-      <section className="relative overflow-hidden text-primary-foreground">
-        <HeroCarousel />
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-seam-line opacity-70" />
+      {/* HERO — dedicated gallery band up top, then the intro on a calm,
+          gradient backdrop with faint drifting 3D glyphs behind the copy.
+          The words are the point; the motion is just atmosphere. */}
+      <HeroImageStrip />
 
-        <div className="relative mx-auto grid max-w-6xl gap-10 px-4 pb-16 pt-20 sm:px-6 sm:pt-28 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-6 lg:pb-28 lg:pt-32">
+      <section className="relative overflow-hidden bg-hero text-primary-foreground">
+        {/* Ambient depth: soft radial glow + a few slow-drifting academic
+            glyphs in true 3D (rotate3d + perspective). Kept blurred, low
+            opacity and out of the tab order — this never competes with the
+            headline, it just gives the panel a sense of depth. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden [perspective:1600px]">
+          <div className="absolute left-1/2 top-0 h-[34rem] w-[50rem] -translate-x-1/2 rounded-full bg-copper/10 blur-[110px]" />
+          <BookOpen strokeWidth={0.8} className="animate-hero-float-a absolute left-[6%] top-[16%] hidden h-20 w-20 text-gold/[0.14] sm:block lg:h-24 lg:w-24" />
+          <GraduationCap strokeWidth={0.7} className="animate-hero-float-b absolute right-[8%] top-[24%] hidden h-24 w-24 text-copper/[0.13] sm:block lg:h-28 lg:w-28" style={{ animationDelay: "-3s" }} />
+          <Layers strokeWidth={0.8} className="animate-hero-float-c absolute left-[16%] bottom-[10%] hidden h-16 w-16 text-teal/[0.14] sm:block" />
+          <BookOpen strokeWidth={0.8} className="animate-hero-float-a absolute right-[20%] bottom-[8%] hidden h-14 w-14 text-gold/[0.11] sm:block" style={{ animationDelay: "-5.5s" }} />
+        </div>
+
+        <div className="relative z-10 mx-auto grid max-w-6xl gap-10 px-4 pb-16 pt-14 sm:px-6 sm:pt-16 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-6 lg:pb-28 lg:pt-20">
           <div className="text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-gold">
+            <div className="inline-flex items-center gap-2 rounded-full border border-gold/25 bg-gold/[0.07] px-3.5 py-1.5 text-xs font-medium uppercase tracking-[0.2em] text-gold backdrop-blur-sm">
               <Sparkles className="h-3.5 w-3.5" />
               Independent · Built by a CBU student
             </div>
-            <h1 className="mt-5 font-display text-5xl leading-[1.05] tracking-tight sm:text-6xl xl:text-7xl">
+            <h1 className="mt-6 font-display text-5xl leading-[0.98] tracking-tight sm:text-6xl xl:text-7xl">
               Find. Learn. Revise.
               <br />
-              <span className="text-gradient-gold">Repeat.</span>
+              <span className="text-gradient-gold drop-shadow-[0_0_44px_oklch(0.82_0.135_85_/_0.35)]">Repeat.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-lg text-base text-primary-foreground/75 sm:text-lg lg:mx-0">
               The calm, focused study companion for Copperbelt University. Course notes, past papers and revision packs — one search away.
@@ -119,33 +132,37 @@ function Home() {
             )}
           </div>
 
-          {/* 3D tilt preview — desktop only, this is the "it feels different" moment */}
+          {/* 3D tilt preview — desktop only, this is the "it feels different" moment.
+              The float animation lives on this wrapper, not on TiltCard's own root,
+              so it never fights with the pointer-driven rotateX/rotateY transform. */}
           <div className="hidden lg:block">
-            <TiltCard className="animate-float">
-              <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-elegant backdrop-blur-xl" style={{ transform: "translateZ(30px)" }}>
-                <div className="flex items-center gap-2 text-xs text-primary-foreground/70">
-                  <FileText className="h-3.5 w-3.5" /> Past Paper — Data Structures.pdf
+            <div className="animate-float relative">
+              <div className="absolute -inset-6 -z-10 rounded-[2.5rem] bg-gold/10 blur-3xl" />
+              <TiltCard>
+                <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-elegant backdrop-blur-xl" style={{ transform: "translateZ(30px)" }}>
+                  <div className="flex items-center gap-2 text-xs text-primary-foreground/70">
+                    <FileText className="h-3.5 w-3.5" /> Past Paper — Data Structures.pdf
+                  </div>
+                  <div className="mt-4 h-px bg-white/10" />
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {demoActions.map((a) => (
+                      <div key={a.label} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-white">
+                        <a.icon className="h-3.5 w-3.5 text-gold" /> {a.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-primary-foreground/80">
+                    <span className="font-semibold text-white">Summary:</span> Six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, complexity.
+                  </div>
+                  <div className="mt-4 flex items-center justify-between rounded-xl bg-gold-gradient px-3 py-2 text-xs font-bold text-gold-foreground">
+                    <span>Quiz ready</span><span>9/10</span>
+                  </div>
                 </div>
-                <div className="mt-4 h-px bg-white/10" />
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  {demoActions.map((a) => (
-                    <div key={a.label} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-white">
-                      <a.icon className="h-3.5 w-3.5 text-gold" /> {a.label}
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-primary-foreground/80">
-                  <span className="font-semibold text-white">Summary:</span> Six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, complexity.
-                </div>
-                <div className="mt-4 flex items-center justify-between rounded-xl bg-gold-gradient px-3 py-2 text-xs font-bold text-gold-foreground">
-                  <span>Quiz ready</span><span>9/10</span>
-                </div>
-              </div>
-            </TiltCard>
+              </TiltCard>
+            </div>
           </div>
         </div>
       </section>
-
       {/* BROWSE BY PROGRAMME */}
       <section className="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-20">
         <SectionHeader
