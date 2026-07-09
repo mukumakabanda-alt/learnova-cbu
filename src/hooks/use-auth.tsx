@@ -42,14 +42,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data }: { data: { session: any } }) => {
       if (!active) return;
       setSession(data.session);
       if (data.session?.user) loadProfile(data.session.user.id);
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: string, newSession: any) => {
+
       setSession(newSession);
       if (newSession?.user) {
         loadProfile(newSession.user.id);
