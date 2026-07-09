@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import campusBuildings from "@/assets/campus-buildings.asset.json";
 import campusGate from "@/assets/campus-gate.asset.json";
 import campusGarden from "@/assets/campus-garden.asset.json";
@@ -16,47 +17,47 @@ const SLIDES = [
   cbuMainBuilding, campusGate, cbuPalm, campusGarden, cbuGateNight, graduation,
 ];
 
-// Six frames, two photos each — all twelve campus shots used exactly once,
-// no duplicates. Frame i shows SLIDES[i] then crossfades to SLIDES[i + 6].
-// Each frame runs its own cycle length, so they drift out of phase with
-// each other permanently — nothing fades in sync, which is what makes a
-// static grid of photos feel alive instead of mechanical.
-const FRAME_COUNT = 6;
-const DURATIONS = [12, 15, 18, 13, 16, 14]; // seconds, one per frame — slow, calm, staggered
+const INTERVAL_MS = 4200;
 
+// One dedicated hero image slot. Each photo crossfades into the next
+// — quiet, cinematic, never a jump. Keeps the same on-page position as
+// the previous strip, just consolidated into a single frame.
 export function HeroImageStrip() {
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setActive((i) => (i + 1) % SLIDES.length);
+    }, INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+
   return (
-    <div
-      aria-hidden
-      className="w-full border-b border-white/5 bg-surface px-4 py-5 sm:py-6 lg:py-7"
-    >
-      <div className="mx-auto grid max-w-6xl grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 lg:gap-5">
-        {Array.from({ length: FRAME_COUNT }).map((_, i) => {
-          const duration = DURATIONS[i];
-          const photos = [SLIDES[i], SLIDES[i + FRAME_COUNT]];
-          return (
-            <figure
+    <div className="w-full bg-surface px-4 py-5 sm:py-6 lg:py-7">
+      <figure className="relative mx-auto aspect-[16/9] w-full max-w-4xl overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-elegant sm:aspect-[21/9]">
+        {SLIDES.map((photo, i) => (
+          <img
+            key={i}
+            src={photo.url}
+            alt=""
+            loading={i === 0 ? "eager" : "lazy"}
+            aria-hidden={i !== active}
+            className="absolute inset-0 h-full w-full object-cover transition-opacity duration-[1400ms] ease-in-out"
+            style={{ opacity: i === active ? 1 : 0 }}
+          />
+        ))}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
+        <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
+          {SLIDES.map((_, i) => (
+            <span
               key={i}
-              className="group/photo relative aspect-[4/3] overflow-hidden rounded-2xl ring-1 ring-white/10"
-            >
-              {photos.map((photo, p) => (
-                <img
-                  key={p}
-                  src={photo.url}
-                  alt=""
-                  loading={i === 0 && p === 0 ? "eager" : "lazy"}
-                  className="hero-tile-img absolute inset-0 h-full w-full object-cover group-hover/photo:[animation-play-state:paused]"
-                  style={{
-                    animationDuration: `${duration}s`,
-                    animationDelay: `${-(p * duration) / photos.length}s`,
-                  }}
-                />
-              ))}
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-transparent" />
-            </figure>
-          );
-        })}
-      </div>
+              className={`h-1.5 rounded-full transition-all duration-500 ${
+                i === active ? "w-5 bg-gold" : "w-1.5 bg-white/40"
+              }`}
+            />
+          ))}
+        </div>
+      </figure>
     </div>
   );
-  }
+}
