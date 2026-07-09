@@ -18,8 +18,6 @@ export type Course = {
   description: string;
   topics: string[];
   materials: Material[];
-  saves: number;
-  trending?: boolean;
 };
 
 export type Programme = {
@@ -59,7 +57,6 @@ export const courses: Course[] = [
       { id: "m4", title: "Revision Summary Pack", type: "Summary", year: 2, pages: 28, updated: "5 days ago" },
       { id: "m5", title: "Assignment 2 Brief", type: "Assignment", year: 2, pages: 4, updated: "yesterday" },
     ],
-    saves: 1284, trending: true,
   },
   {
     code: "EE 340",
@@ -75,7 +72,6 @@ export const courses: Course[] = [
       { id: "m2", title: "Past Papers 2020–2024", type: "Past Paper", year: 3, pages: 62, updated: "4 days ago" },
       { id: "m3", title: "Load Flow Worked Examples", type: "Summary", year: 3, pages: 22, updated: "1 week ago" },
     ],
-    saves: 942, trending: true,
   },
   {
     code: "BBA 220",
@@ -91,7 +87,6 @@ export const courses: Course[] = [
       { id: "m2", title: "Past Paper 2024", type: "Past Paper", year: 2, pages: 8, updated: "6 days ago" },
       { id: "m3", title: "Consolidation Cheat Sheet", type: "Summary", year: 2, pages: 6, updated: "3 days ago" },
     ],
-    saves: 706,
   },
   {
     code: "MIN 410",
@@ -106,7 +101,6 @@ export const courses: Course[] = [
       { id: "m1", title: "Complete Notes 2025", type: "Notes", year: 4, pages: 142, updated: "1 week ago" },
       { id: "m2", title: "Past Paper — 2023", type: "Past Paper", year: 4, pages: 10, updated: "2 weeks ago" },
     ],
-    saves: 512,
   },
   {
     code: "CS 110",
@@ -122,7 +116,6 @@ export const courses: Course[] = [
       { id: "m2", title: "Lab Exercises Pack", type: "Assignment", year: 1, pages: 20, updated: "yesterday" },
       { id: "m3", title: "Past Papers 2022–2024", type: "Past Paper", year: 1, pages: 34, updated: "1 week ago" },
     ],
-    saves: 1650, trending: true,
   },
   {
     code: "AR 320",
@@ -137,7 +130,6 @@ export const courses: Course[] = [
       { id: "m1", title: "Studio Brief 2025", type: "Outline", year: 3, pages: 12, updated: "5 days ago" },
       { id: "m2", title: "Reference Portfolio", type: "Slides", year: 3, pages: 60, updated: "2 weeks ago" },
     ],
-    saves: 388,
   },
 ];
 
