@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { courses, programmes } from "@/lib/mock-data";
-import { Upload, Users, GraduationCap, FileText, TrendingUp, Inbox, Plus, CheckCircle2 } from "lucide-react";
+import { Upload, Users, GraduationCap, FileText, Layers, Inbox, Plus, CheckCircle2 } from "lucide-react";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -15,6 +15,9 @@ export const Route = createFileRoute("/admin")({
 });
 
 function Admin() {
+  const totalMaterials = courses.reduce((sum, c) => sum + c.materials.length, 0);
+  const mostComplete = [...courses].sort((a, b) => b.materials.length - a.materials.length).slice(0, 4);
+
   return (
     <div className="min-h-screen bg-background pb-20 md:pb-0">
       <SiteHeader />
@@ -32,10 +35,10 @@ function Admin() {
 
         <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { icon: FileText, label: "Materials", value: "2,431", trend: "+124 this week" },
-            { icon: Users, label: "Students", value: "8,204", trend: "+312 this week" },
-            { icon: GraduationCap, label: "Programmes", value: programmes.length.toString(), trend: "Stable" },
-            { icon: Inbox, label: "Open requests", value: "17", trend: "3 urgent" },
+            { icon: FileText, label: "Materials seeded", value: totalMaterials.toString(), trend: "From current mock data" },
+            { icon: Users, label: "Students", value: "—", trend: "Connect a backend" },
+            { icon: GraduationCap, label: "Programmes", value: programmes.length.toString(), trend: `${courses.length} courses live` },
+            { icon: Inbox, label: "Open requests", value: "—", trend: "Connect a backend" },
           ].map((s) => (
             <div key={s.label} className="rounded-2xl border border-border bg-card p-5">
               <div className="flex items-center justify-between">
@@ -72,32 +75,20 @@ function Admin() {
 
           <div className="rounded-2xl border border-border bg-card p-5">
             <h2 className="font-display text-xl text-foreground">Missing requests</h2>
-            <div className="mt-4 space-y-3">
-              {[
-                { code: "CS 320", note: "Compilers notes 2024", who: "Mwape N." },
-                { code: "BBA 410", note: "Strategy past papers", who: "Bwalya K." },
-                { code: "EE 220", note: "Circuits summary", who: "Tembo L." },
-              ].map((r) => (
-                <div key={r.note} className="rounded-xl border border-border bg-surface p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">{r.code}</span>
-                    <span className="text-[11px] text-muted-foreground">{r.who}</span>
-                  </div>
-                  <div className="mt-1.5 text-sm font-medium text-foreground">{r.note}</div>
-                </div>
-              ))}
+            <div className="mt-4 rounded-xl border border-dashed border-border bg-surface-muted p-5 text-center text-sm text-muted-foreground">
+              Nothing yet. This fills in once the "Missing material" button on the student side is wired to a database.
             </div>
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
-            <h2 className="font-display text-xl text-foreground">Trending courses</h2>
+            <h2 className="font-display text-xl text-foreground">Most complete courses</h2>
             <div className="mt-4 grid gap-2">
-              {courses.filter((c) => c.trending).map((c) => (
+              {mostComplete.map((c) => (
                 <div key={c.code} className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3">
-                  <TrendingUp className="h-4 w-4 text-copper" />
+                  <Layers className="h-4 w-4 text-copper" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-foreground">{c.code} · {c.title}</div>
-                    <div className="text-xs text-muted-foreground">{c.saves.toLocaleString()} saves</div>
+                    <div className="text-xs text-muted-foreground">{c.materials.length} materials</div>
                   </div>
                 </div>
               ))}
@@ -121,4 +112,4 @@ function Admin() {
       <MobileTabBar />
     </div>
   );
-}
+          }
