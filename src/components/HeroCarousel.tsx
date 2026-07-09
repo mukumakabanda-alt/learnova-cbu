@@ -14,21 +14,20 @@ import cbuMainBuilding from "@/assets/cbu-main-building.jpg.asset.json";
 import cbuPalm from "@/assets/cbu-palm.jpg.asset.json";
 
 const SLIDES = [
-  { img: cbuGateDay },
-  { img: campusQuad },
-  { img: cbuLawn },
-  { img: cbuSunset },
-  { img: campusBuildings },
-  { img: cbuCourtyard },
-  { img: cbuMainBuilding },
-  { img: campusGate },
-  { img: cbuPalm },
-  { img: campusGarden },
-  { img: cbuGateNight },
-  { img: graduation },
+  cbuGateDay,
+  campusQuad,
+  cbuLawn,
+  cbuSunset,
+  campusBuildings,
+  cbuCourtyard,
+  cbuMainBuilding,
+  campusGate,
+  cbuPalm,
+  campusGarden,
+  cbuGateNight,
+  graduation,
 ];
 
-// Full-bleed autoplaying backdrop for the hero.
 export function HeroCarousel() {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
   const [selected, setSelected] = useState(0);
@@ -51,7 +50,7 @@ export function HeroCarousel() {
           {SLIDES.map((s, i) => (
             <div key={i} className="relative h-full min-w-0 flex-[0_0_100%]">
               <img
-                src={s.img.url}
+                src={s.url}
                 alt=""
                 loading={i === 0 ? "eager" : "lazy"}
                 className="h-full w-full object-cover"
@@ -60,7 +59,6 @@ export function HeroCarousel() {
           ))}
         </div>
       </div>
-      {/* scrim so hero copy stays legible over any photo */}
       <div className="absolute inset-0 bg-hero opacity-90" />
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
       <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
