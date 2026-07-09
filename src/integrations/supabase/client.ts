@@ -15,7 +15,11 @@ if (!supabaseUrl || !supabaseKey) {
   );
 }
 
-export const supabase = createClient<Database>(supabaseUrl ?? "http://localhost", supabaseKey ?? "public-anon-key", {
+const _client = createClient(supabaseUrl ?? "http://localhost", supabaseKey ?? "public-anon-key", {
   auth: { persistSession: true, autoRefreshToken: true },
-}) as ReturnType<typeof createClient<Database>> & Record<string, any>;
+});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const supabase = _client as any;
+export type { Database };
+
 
