@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Logo } from "@/components/SiteHeader";
 import { useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Info } from "lucide-react";
 import campusGate from "@/assets/campus-gate.asset.json";
 
 export const Route = createFileRoute("/auth")({
@@ -16,6 +16,7 @@ export const Route = createFileRoute("/auth")({
 
 function Auth() {
   const [mode, setMode] = useState<"signin" | "signup">("signup");
+  const [submitted, setSubmitted] = useState(false);
 
   return (
     <div className="grid min-h-screen bg-background md:grid-cols-2">
@@ -41,14 +42,21 @@ function Auth() {
             {mode === "signup" ? "Personal dashboard for your programme in under a minute." : "Sign in to continue studying."}
           </p>
 
-          <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); }}>
+          {submitted && (
+            <div className="mt-4 flex items-start gap-2 rounded-xl border border-gold/30 bg-gold/10 p-3 text-xs text-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
+              Accounts aren't connected yet — this is a working preview of the sign-up flow, not a real submission.
+            </div>
+          )}
+
+          <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); setSubmitted(true); }}>
             {mode === "signup" && (
               <>
                 <Field label="Full name" placeholder="Chanda Mwansa" />
                 <Field label="Student number" placeholder="20220001" />
               </>
             )}
-            <Field label="Email or phone" placeholder="you@cbu.ac.zm" type="email" />
+            <Field label="Email or phone" placeholder="you@example.com" type="email" />
             {mode === "signup" && (
               <div className="grid grid-cols-2 gap-3">
                 <SelectField label="Year" options={["Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]} />
@@ -64,7 +72,7 @@ function Auth() {
 
           <div className="mt-6 text-center text-sm text-muted-foreground">
             {mode === "signup" ? "Already have an account? " : "New to Learnova? "}
-            <button onClick={() => setMode(mode === "signup" ? "signin" : "signup")} className="font-semibold text-teal hover:underline">
+            <button onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setSubmitted(false); }} className="font-semibold text-teal hover:underline">
               {mode === "signup" ? "Sign in" : "Create one"}
             </button>
           </div>
