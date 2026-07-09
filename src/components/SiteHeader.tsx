@@ -20,11 +20,13 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         <Logo />
+        {/* NOTE: /admin intentionally has no public nav entry — it's an operator
+            route, not a student-facing one. Reachable directly by URL for now;
+            gate it behind real auth before it holds anything sensitive. */}
         <nav className="hidden items-center gap-1 md:flex">
           <Link to="/browse" className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [&.active]:text-foreground">Browse</Link>
           <Link to="/search" className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">Search</Link>
           <Link to="/dashboard" className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">Dashboard</Link>
-          <Link to="/admin" className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">Admin</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Link to="/search" aria-label="Search" className="grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:hidden">
@@ -72,7 +74,7 @@ export function SiteFooter() {
         <div className="md:col-span-2">
           <Logo />
           <p className="mt-3 max-w-sm text-sm text-muted-foreground">
-            Learnova is an independent student study platform inspired by the Copperbelt University experience. Find. Learn. Revise. Repeat.
+            Built by a CBU student, for CBU students — which is why it's fast, focused, and organised the way you'd actually look for things.
           </p>
         </div>
         <div>
@@ -98,4 +100,4 @@ export function SiteFooter() {
       <div className="h-16 md:hidden" />
     </footer>
   );
-}
+          }
