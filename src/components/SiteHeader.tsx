@@ -1,5 +1,5 @@
-import { Link } from "@tanstack/react-router";
-import { BookOpen, LayoutDashboard, Search, Compass, ShieldCheck } from "lucide-react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { BookOpen, LayoutDashboard, Search, Compass, ShieldCheck, User } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
 export function Logo({ className = "" }: { className?: string }) {
@@ -16,8 +16,6 @@ export function Logo({ className = "" }: { className?: string }) {
   );
 }
 
-// Top bar is now just identity + quick search + account — all wayfinding
-// lives in the bottom dock so there's one nav system, not two.
 export function SiteHeader() {
   const { user, profile, signOut } = useAuth();
 
@@ -47,31 +45,43 @@ export function SiteHeader() {
   );
 }
 
-// The one navigation system: a dock, always at the bottom, on every
-// breakpoint. Shows an Admin tab only to admins.
+// One nav dock. Active tab glows copper — subtle neon, not carnival.
 export function MobileTabBar() {
   const { isAdmin } = useAuth();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
   const items = [
     { to: "/", label: "Home", icon: BookOpen },
     { to: "/browse", label: "Browse", icon: Compass },
     { to: "/study", label: "Study", icon: LayoutDashboard },
-    { to: "/dashboard", label: "You", icon: LayoutDashboard },
+    { to: "/dashboard", label: "You", icon: User },
     ...(isAdmin ? [{ to: "/admin", label: "Admin", icon: ShieldCheck }] : []),
   ];
 
+  const isActive = (to: string) => (to === "/" ? pathname === "/" : pathname.startsWith(to));
+
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/70 bg-background/95 backdrop-blur-xl">
-      <div className={`mx-auto grid max-w-md`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
-        {items.map(({ to, label, icon: Icon }) => (
-          <Link
-            key={to}
-            to={to}
-            className="flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground [&.active]:text-primary"
-          >
-            <Icon className="h-5 w-5" />
-            {label}
-          </Link>
-        ))}
+      <div className="mx-auto grid max-w-md" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map(({ to, label, icon: Icon }) => {
+          const active = isActive(to);
+          return (
+            <Link
+              key={to}
+              to={to}
+              className={`group flex flex-col items-center gap-1 py-2.5 text-[11px] font-semibold transition-colors ${
+                active ? "text-copper" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon
+                className={`h-5 w-5 transition-all ${
+                  active ? "drop-shadow-[0_0_10px_oklch(0.7_0.16_48_/_0.9)]" : ""
+                }`}
+              />
+              <span className={active ? "drop-shadow-[0_0_6px_oklch(0.7_0.16_48_/_0.7)]" : ""}>{label}</span>
+            </Link>
+          );
+        })}
       </div>
       <div className="h-[env(safe-area-inset-bottom)]" />
     </nav>
@@ -85,7 +95,7 @@ export function SiteFooter() {
         <div className="md:col-span-2">
           <Logo />
           <p className="mt-3 max-w-sm text-sm text-muted-foreground">
-            Built by a CBU student, for CBU students — which is why it's fast, focused, and organised the way you'd actually look for things.
+            Built by a CBU student, for CBU students — fast, focused, and organised the way you'd actually look for things.
           </p>
         </div>
         <div>
@@ -105,10 +115,14 @@ export function SiteFooter() {
           </ul>
         </div>
       </div>
-      <div className="border-t border-border/60 py-4 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} Learnova. Built for students, by students.
+      <div className="flex flex-col items-center gap-1 border-t border-border/60 py-4 text-center text-xs text-muted-foreground">
+        <span>© {new Date().getFullYear()} Learnova. Built for students, by students.</span>
+        {/* Unlisted admin door — nothing labels it as admin. */}
+        <Link to="/admin" className="text-[10px] text-muted-foreground/40 transition-colors hover:text-copper">
+          ·
+        </Link>
       </div>
       <div className="h-20" />
     </footer>
   );
-                     }
+}
