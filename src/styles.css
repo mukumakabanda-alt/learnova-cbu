@@ -2,8 +2,6 @@
 @source "../src";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-display: "Instrument Serif", ui-serif, Georgia, serif;
@@ -42,80 +40,69 @@
   --color-surface-muted: var(--surface-muted);
 }
 
+/*
+  Learnova — "Copperbelt" theme.
+  One idea drives every value below: a seam of copper running through
+  deep navy rock. Navy is the ground you stand on (background, cards,
+  chrome). Copper is the one warm, active color — it only ever means
+  "you can act on this" (buttons, links, focus). Gold is reserved for
+  a single premium highlight per screen. Teal is quiet, informational.
+  If a color doesn't map to one of those four jobs, it doesn't belong.
+*/
+
 :root {
   --radius: 0.875rem;
 
-  --background: oklch(0.985 0.004 260);
-  --foreground: oklch(0.18 0.04 265);
+  --background: oklch(0.15 0.032 262);
+  --foreground: oklch(0.96 0.006 260);
 
-  --surface: oklch(1 0 0);
-  --surface-muted: oklch(0.965 0.008 260);
+  --surface: oklch(0.195 0.036 262);
+  --surface-muted: oklch(0.175 0.034 262);
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.04 265);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.04 265);
+  --card: oklch(0.195 0.036 262);
+  --card-foreground: oklch(0.96 0.006 260);
+  --popover: oklch(0.195 0.036 262);
+  --popover-foreground: oklch(0.96 0.006 260);
 
-  /* Deep navy / midnight blue */
-  --primary: oklch(0.24 0.06 265);
-  --primary-foreground: oklch(0.985 0.004 260);
+  /* Copper — the only color that means "act on this" (buttons, active links, focus ring) */
+  --primary: oklch(0.7 0.15 48);
+  --primary-foreground: oklch(0.15 0.03 262);
 
-  --secondary: oklch(0.96 0.008 260);
-  --secondary-foreground: oklch(0.24 0.06 265);
+  --secondary: oklch(0.245 0.04 262);
+  --secondary-foreground: oklch(0.96 0.006 260);
 
-  --muted: oklch(0.96 0.008 260);
-  --muted-foreground: oklch(0.5 0.02 260);
+  --muted: oklch(0.245 0.04 262);
+  --muted-foreground: oklch(0.7 0.02 258);
 
-  --accent: oklch(0.94 0.02 80);
-  --accent-foreground: oklch(0.24 0.06 265);
+  --accent: oklch(0.27 0.05 80);
+  --accent-foreground: oklch(0.9 0.09 88);
 
-  /* Warm academic gold */
-  --gold: oklch(0.78 0.13 80);
-  --gold-foreground: oklch(0.22 0.05 265);
-  /* Copper / amber warmth */
-  --copper: oklch(0.66 0.14 50);
-  /* Interactive teal */
-  --teal: oklch(0.62 0.11 210);
+  /* Academic gold — reserved for one premium highlight per screen */
+  --gold: oklch(0.82 0.135 85);
+  --gold-foreground: oklch(0.16 0.03 262);
+  /* Copper twin, tuned slightly deeper for icons/badges vs. large button fills */
+  --copper: oklch(0.66 0.16 44);
+  /* Quiet, informational — secondary links, non-primary focus states */
+  --teal: oklch(0.7 0.1 200);
 
-  --destructive: oklch(0.6 0.22 27);
-  --destructive-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.65 0.2 25);
+  --destructive-foreground: oklch(0.98 0 0);
 
-  --border: oklch(0.9 0.01 260);
-  --input: oklch(0.92 0.01 260);
-  --ring: oklch(0.62 0.11 210);
-
-  --shadow-elegant: 0 20px 60px -25px color-mix(in oklab, var(--primary) 35%, transparent);
-  --shadow-soft: 0 4px 20px -8px color-mix(in oklab, var(--primary) 18%, transparent);
-
-  --gradient-hero: linear-gradient(140deg, oklch(0.22 0.06 265) 0%, oklch(0.3 0.08 260) 55%, oklch(0.4 0.09 240) 100%);
-  --gradient-gold: linear-gradient(135deg, oklch(0.82 0.13 82), oklch(0.7 0.15 55));
-}
-
-.dark {
-  --background: oklch(0.16 0.03 265);
-  --foreground: oklch(0.97 0.005 260);
-  --surface: oklch(0.2 0.04 265);
-  --surface-muted: oklch(0.22 0.04 265);
-  --card: oklch(0.2 0.04 265);
-  --card-foreground: oklch(0.97 0.005 260);
-  --popover: oklch(0.2 0.04 265);
-  --popover-foreground: oklch(0.97 0.005 260);
-  --primary: oklch(0.85 0.02 260);
-  --primary-foreground: oklch(0.2 0.05 265);
-  --secondary: oklch(0.26 0.04 265);
-  --secondary-foreground: oklch(0.97 0.005 260);
-  --muted: oklch(0.26 0.04 265);
-  --muted-foreground: oklch(0.7 0.02 260);
-  --accent: oklch(0.3 0.05 80);
-  --accent-foreground: oklch(0.97 0.005 260);
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.62 0.11 210);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.7 0.15 48);
+
+  --shadow-elegant: 0 24px 70px -24px oklch(0 0 0 / 55%), 0 0 0 1px oklch(1 0 0 / 6%);
+  --shadow-soft: 0 10px 30px -14px oklch(0 0 0 / 45%), 0 0 0 1px oklch(1 0 0 / 5%);
+
+  --gradient-hero: linear-gradient(160deg, oklch(0.105 0.026 264) 0%, oklch(0.155 0.034 262) 48%, oklch(0.205 0.045 250) 100%);
+  --gradient-gold: linear-gradient(135deg, oklch(0.85 0.13 85), oklch(0.72 0.16 55));
+  --gradient-seam: linear-gradient(90deg, transparent, oklch(0.7 0.16 48 / 70%), oklch(0.82 0.14 82 / 55%), transparent);
 }
 
 @layer base {
   * { border-color: var(--color-border); }
-  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; color-scheme: dark; }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
@@ -123,6 +110,7 @@
     font-feature-settings: "cv11", "ss01";
   }
   h1, h2, h3, h4 { letter-spacing: -0.02em; }
+  ::selection { background: oklch(0.7 0.15 48 / 30%); color: var(--color-foreground); }
 }
 
 @utility text-gradient-gold {
@@ -140,6 +128,13 @@
   background: var(--gradient-gold);
 }
 
+/* Signature device: a thin glowing copper seam. Used sparingly —
+   hero backdrop, and as a top-edge accent on the odd card that
+   deserves emphasis. This is the one flourish; everything else stays quiet. */
+@utility bg-seam-line {
+  background: var(--gradient-seam);
+}
+
 @utility shadow-elegant {
   box-shadow: var(--shadow-elegant);
 }
@@ -154,4 +149,4 @@
 @utility card-hover-active {
   transform: translateY(-3px);
   box-shadow: var(--shadow-soft);
-}
+  }
