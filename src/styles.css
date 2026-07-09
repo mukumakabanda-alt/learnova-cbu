@@ -160,9 +160,17 @@
      so four on-screen instances never sync into an obvious pattern.
   All of it stops dead under prefers-reduced-motion.
 */
-@keyframes hero-marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
+@keyframes hero-tile-fade {
+  0%   { opacity: 1; }
+  42%  { opacity: 1; }
+  50%  { opacity: 0; }
+  92%  { opacity: 0; }
+  100% { opacity: 1; }
+}
+.hero-tile-img {
+  animation-name: hero-tile-fade;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
 }
 .hero-marquee-track {
   animation: hero-marquee 50s linear infinite;
@@ -193,7 +201,7 @@
 .animate-hero-float-c { animation: hero-float-c 8s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-marquee-track,
+  .hero-tile-img,
   .animate-float,
   .animate-hero-float-a,
   .animate-hero-float-b,
