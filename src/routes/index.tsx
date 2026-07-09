@@ -1,11 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { SearchBar } from "@/components/SearchBar";
 import { CourseCard } from "@/components/CourseCard";
 import { HeroCarousel } from "@/components/HeroCarousel";
 import { useProgrammes, useCourses } from "@/lib/queries";
 import {
-  ArrowRight, BookOpen, Compass, GraduationCap, Sparkles, Timer, Zap, Layers, FileText, ListChecks, MessageCircle,
+  ArrowRight, BookOpen, Compass, GraduationCap, Sparkles, Timer, Zap, Layers, FileText, ListChecks, MessageCircle, Flame,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -28,6 +29,42 @@ const demoActions = [
   { icon: MessageCircle, label: "Ask a question" },
 ];
 
+// Real 3D depth, no library: tracks the pointer and rotates the card in
+// actual 3D space (perspective + rotateX/rotateY), which is what a mouse-
+// driven "tilt" card needs to feel physical instead of just animated.
+function TiltCard({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<CSSProperties>({
+    transform: "perspective(1200px) rotateX(0deg) rotateY(0deg)",
+  });
+
+  function handleMove(e: React.MouseEvent<HTMLDivElement>) {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    setStyle({
+      transform: `perspective(1200px) rotateX(${(-py * 9).toFixed(2)}deg) rotateY(${(px * 13).toFixed(2)}deg)`,
+    });
+  }
+  function handleLeave() {
+    setStyle({ transform: "perspective(1200px) rotateX(0deg) rotateY(0deg)" });
+  }
+
+  return (
+    <div
+      ref={ref}
+      onMouseMove={handleMove}
+      onMouseLeave={handleLeave}
+      className={className}
+      style={{ transition: "transform 0.5s cubic-bezier(0.2,0.7,0.2,1)", transformStyle: "preserve-3d", ...style }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function Home() {
   const { data: programmes } = useProgrammes();
   const { data: courses } = useCourses();
@@ -37,50 +74,75 @@ function Home() {
     <div className="min-h-screen bg-background pb-20">
       <SiteHeader />
 
-      {/* HERO — all 5 campus photos, autoplaying behind the copy */}
+      {/* HERO — carousel behind, real 3D tilt card up front */}
       <section className="relative overflow-hidden text-primary-foreground">
         <HeroCarousel />
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute inset-x-0 top-0 h-px bg-seam-line opacity-60" />
-        </div>
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-seam-line opacity-70" />
 
-        <div className="relative mx-auto max-w-3xl px-4 pb-16 pt-16 text-center sm:px-6 sm:pt-24 lg:pb-28 lg:pt-28">
-          <div className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-gold">
-            <Sparkles className="h-3.5 w-3.5" />
-            Independent · Built by a CBU student
-          </div>
-          <h1 className="mt-5 font-display text-5xl leading-[1.05] tracking-tight sm:text-6xl xl:text-7xl">
-            Find. Learn. Revise.
-            <br />
-            <span className="text-gradient-gold">Repeat.</span>
-          </h1>
-          <p className="mx-auto mt-5 max-w-lg text-base text-primary-foreground/75 sm:text-lg">
-            The calm, focused study companion for Copperbelt University. Course notes, past papers and revision packs — one search away.
-          </p>
-
-          <div className="mx-auto mt-8 max-w-xl">
-            <SearchBar />
-            <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs text-primary-foreground/70">
-              <span>Try</span>
-              {["CS 210", "Power Systems", "IFRS", "Dr. Chanda"].map((t) => (
-                <Link key={t} to="/search" search={{ q: t }} className="rounded-full border border-white/15 bg-white/5 px-3 py-1 backdrop-blur transition-colors hover:bg-white/10 hover:text-white">
-                  {t}
-                </Link>
-              ))}
+        <div className="relative mx-auto grid max-w-6xl gap-10 px-4 pb-16 pt-20 sm:px-6 sm:pt-28 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-6 lg:pb-28 lg:pt-32">
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-gold">
+              <Sparkles className="h-3.5 w-3.5" />
+              Independent · Built by a CBU student
             </div>
+            <h1 className="mt-5 font-display text-5xl leading-[1.05] tracking-tight sm:text-6xl xl:text-7xl">
+              Find. Learn. Revise.
+              <br />
+              <span className="text-gradient-gold">Repeat.</span>
+            </h1>
+            <p className="mx-auto mt-5 max-w-lg text-base text-primary-foreground/75 sm:text-lg lg:mx-0">
+              The calm, focused study companion for Copperbelt University. Course notes, past papers and revision packs — one search away.
+            </p>
+
+            <div className="mx-auto mt-8 max-w-xl lg:mx-0">
+              <SearchBar />
+              <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs text-primary-foreground/70 lg:justify-start">
+                <span>Try</span>
+                {["CS 210", "Power Systems", "IFRS", "Dr. Chanda"].map((t) => (
+                  <Link key={t} to="/search" search={{ q: t }} className="rounded-full border border-white/15 bg-white/5 px-3 py-1 backdrop-blur transition-colors hover:bg-white/10 hover:text-white">
+                    {t}
+                  </Link>
+                ))}
+              </div>
+            </div>
+
+            {liveProgrammeNames.length > 0 && (
+              <div className="mx-auto mt-10 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-3 border-t border-white/10 pt-6 text-xs text-primary-foreground/70 lg:mx-0 lg:justify-start">
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-primary-foreground/90">
+                  <span className="h-1.5 w-1.5 rounded-full bg-copper" /> Live now:
+                </span>
+                {liveProgrammeNames.map((p, i) => (
+                  <span key={p} className="whitespace-nowrap">{p}{i < liveProgrammeNames.length - 1 && <span className="text-primary-foreground/40">,</span>}</span>
+                ))}
+                <span className="whitespace-nowrap text-primary-foreground/45">+ more added weekly</span>
+              </div>
+            )}
           </div>
 
-          {liveProgrammeNames.length > 0 && (
-            <div className="mx-auto mt-10 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-3 border-t border-white/10 pt-6 text-xs text-primary-foreground/70">
-              <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-primary-foreground/90">
-                <span className="h-1.5 w-1.5 rounded-full bg-copper" /> Live now:
-              </span>
-              {liveProgrammeNames.map((p, i) => (
-                <span key={p} className="whitespace-nowrap">{p}{i < liveProgrammeNames.length - 1 && <span className="text-primary-foreground/40">,</span>}</span>
-              ))}
-              <span className="whitespace-nowrap text-primary-foreground/45">+ more added weekly</span>
-            </div>
-          )}
+          {/* 3D tilt preview — desktop only, this is the "it feels different" moment */}
+          <div className="hidden lg:block">
+            <TiltCard className="animate-float">
+              <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-elegant backdrop-blur-xl" style={{ transform: "translateZ(30px)" }}>
+                <div className="flex items-center gap-2 text-xs text-primary-foreground/70">
+                  <FileText className="h-3.5 w-3.5" /> Past Paper — Data Structures.pdf
+                </div>
+                <div className="mt-4 h-px bg-white/10" />
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {demoActions.map((a) => (
+                    <div key={a.label} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-white">
+                      <a.icon className="h-3.5 w-3.5 text-gold" /> {a.label}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-primary-foreground/80">
+                  <span className="font-semibold text-white">Summary:</span> Six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, complexity.
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-xl bg-gold-gradient px-3 py-2 text-xs font-bold text-gold-foreground">
+                  <span>Quiz ready</span><span>9/10</span>
+                </div>
+              </div>
+            </TiltCard>
+          </div>
         </div>
       </section>
 
@@ -91,8 +153,12 @@ function Home() {
           action={<Link to="/browse" className="inline-flex items-center gap-1.5 text-sm font-semibold text-teal hover:underline">All programmes <ArrowRight className="h-4 w-4" /></Link>}
         />
         <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {(programmes ?? []).map((p) => (
-            <Link key={p.code} to="/browse" className="group card-hover rounded-2xl border border-border bg-card p-5 hover:border-primary/30 hover:shadow-soft">
+          {(programmes ?? []).map((p, i) => (
+            <Link
+              key={p.code} to="/browse"
+              className="group card-hover animate-fade-up rounded-2xl border border-border bg-card p-5 hover:border-primary/30 hover:shadow-soft hover:-translate-y-1"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
               <div className={`grid h-10 w-10 place-items-center rounded-xl ${p.accent === "gold" ? "bg-gold/20 text-copper" : p.accent === "copper" ? "bg-copper/15 text-copper" : "bg-teal/15 text-teal"}`}>
                 <GraduationCap className="h-5 w-5" />
               </div>
@@ -123,7 +189,7 @@ function Home() {
             { icon: BookOpen, title: "Open the course", desc: "See the outline, notes, past papers and revision packs organised for you." },
             { icon: Zap, title: "Study smarter", desc: "Turn any document into a summary, flashcards or a practice quiz in seconds." },
           ].map((s, i) => (
-            <div key={s.title} className="relative rounded-2xl border border-border bg-card p-6">
+            <div key={s.title} className="relative rounded-2xl border border-border bg-card p-6 transition-transform duration-300 hover:-translate-y-1">
               <div className="absolute -top-3 left-6 rounded-md bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Step {i + 1}</div>
               <s.icon className="h-6 w-6 text-copper" />
               <h3 className="mt-4 text-lg font-semibold text-foreground">{s.title}</h3>
@@ -157,20 +223,25 @@ function Home() {
               </ul>
             </div>
 
+            {/* Streak / momentum mock — deliberately different from the hero card */}
             <div className="relative">
               <div className="absolute -inset-4 -z-10 rounded-[2rem] bg-seam-line opacity-20 blur-2xl" />
               <div className="rounded-3xl border border-border bg-card p-6 shadow-elegant">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground"><FileText className="h-3.5 w-3.5" /> Complete Course Notes 2025.pdf</div>
-                <div className="mt-4 h-px bg-seam-line opacity-40" />
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  {demoActions.map((a) => (
-                    <div key={a.label} className="flex items-center gap-2 rounded-xl border border-border bg-surface-muted px-3 py-2.5 text-xs font-semibold text-foreground">
-                      <a.icon className="h-3.5 w-3.5 text-copper" /> {a.label}
-                    </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <Flame className="h-4 w-4 text-copper" /> 12-day streak
+                  </div>
+                  <span className="rounded-full bg-teal/15 px-2.5 py-0.5 text-[11px] font-semibold text-teal">On track</span>
+                </div>
+                <div className="mt-4 flex gap-1.5">
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <div key={i} className="h-6 flex-1 rounded-md bg-gradient-to-t from-copper to-gold opacity-90" style={{ animationDelay: `${i * 40}ms` }} />
                   ))}
                 </div>
-                <div className="mt-4 rounded-xl bg-surface-muted p-3 text-xs leading-relaxed text-muted-foreground">
-                  <span className="font-semibold text-foreground">Summary:</span> This document covers six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, and complexity analysis.
+                <div className="mt-4 h-px bg-seam-line opacity-40" />
+                <div className="mt-4 rounded-xl bg-surface-muted p-3">
+                  <div className="text-xs font-semibold text-foreground">Next up</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Quiz · Financial Accounting II — 10 questions, ~6 min</div>
                 </div>
               </div>
             </div>
@@ -214,4 +285,4 @@ function SectionHeader({ eyebrow, title, subtitle, action }: { eyebrow: string; 
       {action}
     </div>
   );
-              }
+    }
