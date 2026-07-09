@@ -16,41 +16,47 @@ const SLIDES = [
   cbuMainBuilding, campusGate, cbuPalm, campusGarden, cbuGateNight, graduation,
 ];
 
-// Doubled so the track can scroll from 0 to -50% and loop with zero seam —
-// the second half is a perfect repeat of the first, so the cut is invisible.
-const TRACK = [...SLIDES, ...SLIDES];
+// Six frames, two photos each — all twelve campus shots used exactly once,
+// no duplicates. Frame i shows SLIDES[i] then crossfades to SLIDES[i + 6].
+// Each frame runs its own cycle length, so they drift out of phase with
+// each other permanently — nothing fades in sync, which is what makes a
+// static grid of photos feel alive instead of mechanical.
+const FRAME_COUNT = 6;
+const DURATIONS = [12, 15, 18, 13, 16, 14]; // seconds, one per frame — slow, calm, staggered
 
-// A dedicated, self-contained gallery band — not a slideshow, not a hero
-// background. Pure motion, zero text, zero chrome. It exists purely to say
-// "this is a real campus, here's the proof" in under two seconds, then gets
-// out of the way for the headline below it.
 export function HeroImageStrip() {
   return (
     <div
       aria-hidden
-      className="group relative w-full overflow-hidden border-b border-white/5 bg-surface py-5 sm:py-6 lg:py-7"
+      className="w-full border-b border-white/5 bg-surface px-4 py-5 sm:py-6 lg:py-7"
     >
-      <div className="hero-marquee-track flex w-max gap-4 px-4 group-hover:[animation-play-state:paused] sm:gap-5">
-        {TRACK.map((slide, i) => (
-          <figure
-            key={i}
-            className="relative h-32 w-48 shrink-0 overflow-hidden rounded-2xl ring-1 ring-white/10 transition-transform duration-500 ease-out hover:scale-[1.03] sm:h-40 sm:w-60 lg:h-48 lg:w-72"
-          >
-            <img
-              src={slide.url}
-              alt=""
-              loading={i === 0 ? "eager" : "lazy"}
-              className="h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent" />
-          </figure>
-        ))}
+      <div className="mx-auto grid max-w-6xl grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 lg:gap-5">
+        {Array.from({ length: FRAME_COUNT }).map((_, i) => {
+          const duration = DURATIONS[i];
+          const photos = [SLIDES[i], SLIDES[i + FRAME_COUNT]];
+          return (
+            <figure
+              key={i}
+              className="group/photo relative aspect-[4/3] overflow-hidden rounded-2xl ring-1 ring-white/10"
+            >
+              {photos.map((photo, p) => (
+                <img
+                  key={p}
+                  src={photo.url}
+                  alt=""
+                  loading={i === 0 && p === 0 ? "eager" : "lazy"}
+                  className="hero-tile-img absolute inset-0 h-full w-full object-cover group-hover/photo:[animation-play-state:paused]"
+                  style={{
+                    animationDuration: `${duration}s`,
+                    animationDelay: `${-(p * duration) / photos.length}s`,
+                  }}
+                />
+              ))}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-transparent" />
+            </figure>
+          );
+        })}
       </div>
-
-      {/* Edge fades — the strip appears to bleed off both sides rather than
-          hard-cut, which is what makes it read as a continuous reel. */}
-      <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-surface to-transparent sm:w-24 lg:w-32" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-surface to-transparent sm:w-24 lg:w-32" />
     </div>
   );
-      }
+  }
