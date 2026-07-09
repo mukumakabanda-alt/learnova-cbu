@@ -153,6 +153,80 @@ function Home() {
                   </div>
                   <div className="mt-4 rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-primary-foreground/80">
                     <span className="font-semibold text-white">Summary:</span> Six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, complexity.
+<section className="relative overflow-hidden bg-hero text-foreground">
+        {/* Ambient depth: soft radial glow + a few slow-drifting academic
+            glyphs in true 3D (rotate3d + perspective). Kept blurred, low
+            opacity and out of the tab order — this never competes with the
+            headline, it just gives the panel a sense of depth. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden [perspective:1600px]">
+          <div className="absolute left-1/2 top-0 h-[34rem] w-[50rem] -translate-x-1/2 rounded-full bg-copper/10 blur-[110px]" />
+          <BookOpen strokeWidth={0.8} className="animate-hero-float-a absolute left-[6%] top-[16%] hidden h-20 w-20 text-gold/[0.14] sm:block lg:h-24 lg:w-24" />
+          <GraduationCap strokeWidth={0.7} className="animate-hero-float-b absolute right-[8%] top-[24%] hidden h-24 w-24 text-copper/[0.13] sm:block lg:h-28 lg:w-28" style={{ animationDelay: "-3s" }} />
+          <Layers strokeWidth={0.8} className="animate-hero-float-c absolute left-[16%] bottom-[10%] hidden h-16 w-16 text-teal/[0.14] sm:block" />
+          <BookOpen strokeWidth={0.8} className="animate-hero-float-a absolute right-[20%] bottom-[8%] hidden h-14 w-14 text-gold/[0.11] sm:block" style={{ animationDelay: "-5.5s" }} />
+        </div>
+
+        <div className="relative z-10 mx-auto grid max-w-6xl gap-10 px-4 pb-16 pt-14 sm:px-6 sm:pt-16 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-6 lg:pb-28 lg:pt-20">
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 rounded-full border border-gold/25 bg-gold/[0.07] px-3.5 py-1.5 text-xs font-medium uppercase tracking-[0.2em] text-gold backdrop-blur-sm">
+              <Sparkles className="h-3.5 w-3.5" />
+              Independent · Built by a CBU student
+            </div>
+            <h1 className="mt-6 font-display text-5xl leading-[0.98] tracking-tight sm:text-6xl xl:text-7xl">
+              Find. Learn. Revise.
+              <br />
+              <span className="text-gradient-gold drop-shadow-[0_0_44px_oklch(0.82_0.135_85_/_0.35)]">Repeat.</span>
+            </h1>
+            <p className="mx-auto mt-5 max-w-lg text-base text-foreground/75 sm:text-lg lg:mx-0">
+              The calm, focused study companion for Copperbelt University. Course notes, past papers and revision packs — one search away.
+            </p>
+
+            <div className="mx-auto mt-8 max-w-xl lg:mx-0">
+              <SearchBar />
+              <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs text-foreground/70 lg:justify-start">
+                <span>Try</span>
+                {["CS 210", "Power Systems", "IFRS", "Dr. Chanda"].map((t) => (
+                  <Link key={t} to="/search" search={{ q: t }} className="rounded-full border border-white/15 bg-white/5 px-3 py-1 backdrop-blur transition-colors hover:bg-white/10 hover:text-white">
+                    {t}
+                  </Link>
+                ))}
+              </div>
+            </div>
+
+            {liveProgrammeNames.length > 0 && (
+              <div className="mx-auto mt-10 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-3 border-t border-white/10 pt-6 text-xs text-foreground/70 lg:mx-0 lg:justify-start">
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-foreground/90">
+                  <span className="h-1.5 w-1.5 rounded-full bg-copper" /> Live now:
+                </span>
+                {liveProgrammeNames.map((p, i) => (
+                  <span key={p} className="whitespace-nowrap">{p}{i < liveProgrammeNames.length - 1 && <span className="text-foreground/40">,</span>}</span>
+                ))}
+                <span className="whitespace-nowrap text-foreground/45">+ more added weekly</span>
+              </div>
+            )}
+          </div>
+
+          {/* 3D tilt preview — desktop only, this is the "it feels different" moment.
+              The float animation lives on this wrapper, not on TiltCard's own root,
+              so it never fights with the pointer-driven rotateX/rotateY transform. */}
+          <div className="hidden lg:block">
+            <div className="animate-float relative">
+              <div className="absolute -inset-6 -z-10 rounded-[2.5rem] bg-gold/10 blur-3xl" />
+              <TiltCard>
+                <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-elegant backdrop-blur-xl" style={{ transform: "translateZ(30px)" }}>
+                  <div className="flex items-center gap-2 text-xs text-foreground/70">
+                    <FileText className="h-3.5 w-3.5" /> Past Paper — Data Structures.pdf
+                  </div>
+                  <div className="mt-4 h-px bg-white/10" />
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {demoActions.map((a) => (
+                      <div key={a.label} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-white">
+                        <a.icon className="h-3.5 w-3.5 text-gold" /> {a.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-foreground/80">
+                    <span className="font-semibold text-white">Summary:</span> Six topics — arrays &amp; linked lists, trees &amp; graphs, sorting, hashing, dynamic programming, complexity.
                   </div>
                   <div className="mt-4 flex items-center justify-between rounded-xl bg-gold-gradient px-3 py-2 text-xs font-bold text-gold-foreground">
                     <span>Quiz ready</span><span>9/10</span>
