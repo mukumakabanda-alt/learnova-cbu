@@ -3,7 +3,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { SearchBar } from "@/components/SearchBar";
 import { CourseCard } from "@/components/CourseCard";
-import { HeroCarousel } from "@/components/HeroCarousel";
+import { HeroImageStrip } from "@/components/HeroCarousel";
 import { useProgrammes, useCourses } from "@/lib/queries";
 import {
   ArrowRight, BookOpen, Compass, GraduationCap, Sparkles, Timer, Zap, Layers, FileText, ListChecks, MessageCircle, Flame,
