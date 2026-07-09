@@ -1,8 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Logo } from "@/components/SiteHeader";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowRight, Info } from "lucide-react";
 import campusGate from "@/assets/campus-gate.asset.json";
+import { useAuth } from "@/hooks/use-auth";
+import { useProgrammes } from "@/lib/queries";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -15,8 +17,44 @@ export const Route = createFileRoute("/auth")({
 });
 
 function Auth() {
+  const navigate = useNavigate();
+  const { signIn, signUp } = useAuth();
+  const { data: programmes } = useProgrammes();
+
   const [mode, setMode] = useState<"signin" | "signup">("signup");
-  const [submitted, setSubmitted] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [studentNumber, setStudentNumber] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [school, setSchool] = useState("");
+  const [programmeCode, setProgrammeCode] = useState("");
+  const [year, setYear] = useState("1");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const schools = useMemo(() => Array.from(new Set((programmes ?? []).map((p) => p.school))).sort(), [programmes]);
+  const programmesForSchool = useMemo(() => (programmes ?? []).filter((p) => p.school === school), [programmes, school]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (mode === "signup") {
+        if (!school || !programmeCode) throw new Error("Pick your school and programme.");
+        const { error: err } = await signUp({ email, password, fullName, studentNumber, school, programmeCode, year: Number(year) });
+        if (err) throw new Error(err);
+      } else {
+        const { error: err } = await signIn(email, password);
+        if (err) throw new Error(err);
+      }
+      navigate({ to: "/dashboard" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="grid min-h-screen bg-background md:grid-cols-2">
@@ -27,7 +65,7 @@ function Auth() {
           <div>
             <div className="text-xs font-medium uppercase tracking-[0.2em] text-gold">For CBU students</div>
             <h1 className="mt-3 font-display text-4xl leading-tight">The calm way to study.</h1>
-            <p className="mt-2 max-w-xs text-primary-foreground/75">Everything you need, organised by programme, year and semester.</p>
+            <p className="mt-2 max-w-xs text-primary-foreground/75">Everything you need, organised by school, programme and year.</p>
           </div>
         </div>
       </div>
@@ -42,37 +80,53 @@ function Auth() {
             {mode === "signup" ? "Personal dashboard for your programme in under a minute." : "Sign in to continue studying."}
           </p>
 
-          {submitted && (
-            <div className="mt-4 flex items-start gap-2 rounded-xl border border-gold/30 bg-gold/10 p-3 text-xs text-foreground">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
-              Accounts aren't connected yet — this is a working preview of the sign-up flow, not a real submission.
+          {error && (
+            <div className="mt-4 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+              {error}
             </div>
           )}
 
-          <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); setSubmitted(true); }}>
+          <form className="mt-6 space-y-3" onSubmit={handleSubmit}>
             {mode === "signup" && (
               <>
-                <Field label="Full name" placeholder="Chanda Mwansa" />
-                <Field label="Student number" placeholder="20220001" />
+                <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Chanda Mwansa" required />
+                <Field label="Student number" value={studentNumber} onChange={setStudentNumber} placeholder="20220001" required />
               </>
             )}
-            <Field label="Email or phone" placeholder="you@example.com" type="email" />
+            <Field label="Email" value={email} onChange={setEmail} placeholder="you@example.com" type="email" required />
             {mode === "signup" && (
-              <div className="grid grid-cols-2 gap-3">
-                <SelectField label="Year" options={["Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]} />
-                <SelectField label="Semester" options={["Semester 1", "Semester 2"]} />
-              </div>
+              <>
+                <SelectField
+                  label="School"
+                  value={school}
+                  onChange={(v) => { setSchool(v); setProgrammeCode(""); }}
+                  options={[{ value: "", label: "Select your school" }, ...schools.map((s) => ({ value: s, label: s }))]}
+                />
+                <SelectField
+                  label="Programme"
+                  value={programmeCode}
+                  onChange={setProgrammeCode}
+                  options={[{ value: "", label: school ? "Select your programme" : "Pick a school first" }, ...programmesForSchool.map((p) => ({ value: p.code, label: p.name }))]}
+                />
+                <SelectField
+                  label="Year of study"
+                  value={year}
+                  onChange={setYear}
+                  options={["1", "2", "3", "4", "5"].map((y) => ({ value: y, label: `Year ${y}` }))}
+                />
+              </>
             )}
-            <Field label="Password" placeholder="At least 8 characters" type="password" />
+            <Field label="Password" value={password} onChange={setPassword} placeholder="At least 8 characters" type="password" required minLength={8} />
 
-            <button type="submit" className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft hover:opacity-95">
-              {mode === "signup" ? "Create account" : "Sign in"} <ArrowRight className="h-4 w-4" />
+            <button type="submit" disabled={submitting} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft hover:opacity-95 disabled:opacity-60">
+              {submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Sign in"} <ArrowRight className="h-4 w-4" />
             </button>
           </form>
 
           <div className="mt-6 text-center text-sm text-muted-foreground">
             {mode === "signup" ? "Already have an account? " : "New to Learnova? "}
-            <button onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setSubmitted(false); }} className="font-semibold text-teal hover:underline">
+            <button onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(null); }} className="font-semibold text-teal hover:underline">
               {mode === "signup" ? "Sign in" : "Create one"}
             </button>
           </div>
@@ -85,21 +139,21 @@ function Auth() {
   );
 }
 
-function Field({ label, ...rest }: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+function Field({ label, value, onChange, ...rest }: { label: string; value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-foreground">{label}</span>
-      <input {...rest} className="w-full rounded-xl border border-input bg-surface px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30" />
+      <input {...rest} value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-xl border border-input bg-surface px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30" />
     </label>
   );
 }
-function SelectField({ label, options }: { label: string; options: string[] }) {
+function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-foreground">{label}</span>
-      <select className="w-full rounded-xl border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30">
-        {options.map((o) => (<option key={o}>{o}</option>))}
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-xl border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30">
+        {options.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
       </select>
     </label>
   );
-}
+                  }
