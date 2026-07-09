@@ -5,17 +5,30 @@ import campusGate from "@/assets/campus-gate.asset.json";
 import campusGarden from "@/assets/campus-garden.asset.json";
 import campusQuad from "@/assets/campus-quad.asset.json";
 import graduation from "@/assets/graduation.asset.json";
+import cbuGateDay from "@/assets/cbu-gate-day.jpg.asset.json";
+import cbuLawn from "@/assets/cbu-lawn.jpg.asset.json";
+import cbuSunset from "@/assets/cbu-sunset.jpg.asset.json";
+import cbuGateNight from "@/assets/cbu-gate-night.jpg.asset.json";
+import cbuCourtyard from "@/assets/cbu-courtyard.jpg.asset.json";
+import cbuMainBuilding from "@/assets/cbu-main-building.jpg.asset.json";
+import cbuPalm from "@/assets/cbu-palm.jpg.asset.json";
 
 const SLIDES = [
-  { img: campusQuad, caption: "Riverside Campus, Kitwe" },
-  { img: campusBuildings, caption: "Lecture halls & labs" },
-  { img: campusGate, caption: "Main gate" },
-  { img: campusGarden, caption: "Campus grounds" },
-  { img: graduation, caption: "Graduation day" },
+  { img: cbuGateDay },
+  { img: campusQuad },
+  { img: cbuLawn },
+  { img: cbuSunset },
+  { img: campusBuildings },
+  { img: cbuCourtyard },
+  { img: cbuMainBuilding },
+  { img: campusGate },
+  { img: cbuPalm },
+  { img: campusGarden },
+  { img: cbuGateNight },
+  { img: graduation },
 ];
 
-// Full-bleed autoplaying backdrop for the hero. Plain setInterval + Embla's
-// own API — no autoplay plugin dependency needed.
+// Full-bleed autoplaying backdrop for the hero.
 export function HeroCarousel() {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
   const [selected, setSelected] = useState(0);
@@ -37,7 +50,12 @@ export function HeroCarousel() {
         <div className="flex h-full">
           {SLIDES.map((s, i) => (
             <div key={i} className="relative h-full min-w-0 flex-[0_0_100%]">
-              <img src={s.img.url} alt="" className="h-full w-full object-cover" />
+              <img
+                src={s.img.url}
+                alt=""
+                loading={i === 0 ? "eager" : "lazy"}
+                className="h-full w-full object-cover"
+              />
             </div>
           ))}
         </div>
@@ -47,7 +65,10 @@ export function HeroCarousel() {
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
       <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
         {SLIDES.map((_, i) => (
-          <span key={i} className={`h-1.5 rounded-full transition-all ${i === selected ? "w-5 bg-gold" : "w-1.5 bg-white/30"}`} />
+          <span
+            key={i}
+            className={`h-1.5 rounded-full transition-all ${i === selected ? "w-5 bg-gold" : "w-1.5 bg-white/30"}`}
+          />
         ))}
       </div>
     </div>
