@@ -18,7 +18,7 @@ export function SearchBar({ size = "lg", initial = "" }: { size?: "lg" | "md"; i
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search course code, topic, or lecturer…"
+        placeholder="What are you looking for?"
         className={`min-w-0 flex-1 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none ${big ? "text-base" : "text-sm"}`}
       />
       <button
