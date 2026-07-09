@@ -107,7 +107,7 @@ function CoursePage() {
                 { icon: Sparkles, label: "Auto summary" },
                 { icon: ListChecks, label: "Flashcards" },
                 { icon: CheckCircle2, label: "Quiz me" },
-                { icon: Lightbulb, label: "Likely exam questions" },
+                { icon: Lightbulb, label: "Common question types" },
               ].map((t) => (
                 <button key={t.label} className="flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-muted">
                   <t.icon className="h-4 w-4 text-teal" /> {t.label}
@@ -117,15 +117,12 @@ function CoursePage() {
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="text-xs font-semibold uppercase tracking-wide text-copper">Progress</div>
-            <div className="mt-3 flex items-baseline gap-1">
-              <div className="font-display text-3xl text-foreground">42%</div>
-              <div className="text-xs text-muted-foreground">of materials opened</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">In this course</div>
+            <div className="mt-3 flex items-baseline gap-1.5">
+              <div className="font-display text-3xl text-foreground">{course.materials.length}</div>
+              <div className="text-xs text-muted-foreground">materials available</div>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-              <div className="h-full w-[42%] bg-gold-gradient" />
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">Keep going — you've reviewed {course.materials.length > 2 ? 2 : 1} of {course.materials.length} materials.</p>
+            <p className="mt-3 text-xs text-muted-foreground">Sign in to save this course and track what you've opened.</p>
           </div>
 
           <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-5 text-sm text-muted-foreground">
@@ -138,4 +135,4 @@ function CoursePage() {
       <MobileTabBar />
     </div>
   );
-}
+                    }
