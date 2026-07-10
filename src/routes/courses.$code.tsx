@@ -76,8 +76,9 @@ function CoursePage() {
 
   async function downloadMaterial(filePath: string | null) {
     if (!filePath) return;
-    const { data } = supabase.storage.from("materials").getPublicUrl(filePath);
-    window.open(data.publicUrl, "_blank");
+    const { data, error } = await supabase.storage.from("materials").createSignedUrl(filePath, 60);
+    if (error) return;
+    window.open(data.signedUrl, "_blank");
   }
 
   return (
