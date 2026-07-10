@@ -1,9 +1,10 @@
 // Called from the client right after a material's raw text has been
-// extracted (see src/lib/pdf-text.ts) and the row exists with status
-// 'processing'. This function never receives the raw PDF — only text —
-// so it has nothing to do with parsing PDFs, which keeps it simple and
-// keeps this the one thing likely to actually need a version bump later:
-// the model string below.
+// extracted (see src/lib/document-text.ts, which handles PDF, Word,
+// PowerPoint, plain text and zip bundles) and the row exists with status
+// 'processing'. This function never receives the raw file — only text —
+// so it has nothing to do with parsing file formats, which keeps it
+// simple and keeps this the one thing likely to actually need a version
+// bump later: the model string below.
 //
 // Env vars used (all auto-provided once Lovable Cloud is enabled on this
 // project — nothing to configure by hand):
@@ -32,7 +33,7 @@ const corsHeaders = {
 // model id if this one ever stops resolving — the gateway's model list
 // does shift over time.
 const MODEL = "google/gemini-2.5-flash";
-const MAX_INPUT_CHARS = 40000;
+const MAX_INPUT_CHARS = 60000;
 
 // Abuse guard: at most this many pipeline runs per user in the rolling
 // window below. Tune once real usage patterns are known.
@@ -43,18 +44,23 @@ type PipelineResult = {
   summary: string;
   flashcards: { question: string; answer: string }[];
   quiz: { question: string; options: string[]; correct_index: number; explanation: string }[];
+  tags: string[];
+  detected_year: number | null;
 };
 
-function buildPrompt(text: string, title: string) {
-  return `You are building study material for a university student from a document titled "${title}".
+function buildPrompt(text: string, title: string, materialType: string) {
+  const isPastPaper = materialType.toLowerCase() === "past paper";
+  return `You are building study material for a university student from a document titled "${title}" (catalogued as: ${materialType}).
 
 Return ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
 {
   "summary": string,               // 150-250 words, plain prose, covers the document's main ideas
   "flashcards": [{ "question": string, "answer": string }],   // 10-15 cards, question on front, concise answer on back
-  "quiz": [{ "question": string, "options": [string, string, string, string], "correct_index": number, "explanation": string }] // 8-10 questions, correct_index is 0-based
+  "quiz": [{ "question": string, "options": [string, string, string, string], "correct_index": number, "explanation": string }], // 8-10 questions, correct_index is 0-based
+  "tags": [string],                // 4-8 short topic/theme tags (2-4 words each) actually covered in the text — used to recommend related material
+  "detected_year": number | null   // the calendar year this document is FROM, ONLY if it's stated plainly in the text (e.g. an exam header like "MAY 2019"). null if not stated or unclear — never guess.
 }
-
+${isPastPaper ? `\nThis is a past exam paper. Weight the flashcards and quiz toward the recurring themes and question styles actually present in the text — the goal is to help a student recognise what this course tends to ask, not just recall isolated facts.\n` : ""}
 Base everything only on the document text below. If the text is fragments or low quality, still do your best with what's there.
 
 DOCUMENT TEXT:
@@ -65,11 +71,27 @@ ${text.slice(0, MAX_INPUT_CHARS)}
 
 function extractJson(raw: string): PipelineResult {
   const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "");
-  const parsed = JSON.parse(cleaned);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Salvage attempt: the model occasionally wraps valid JSON in a
+    // sentence or two of commentary despite instructions. Grab the
+    // outermost { ... } span and try again before giving up entirely.
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) throw new Error("AI response was not valid JSON");
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  }
   if (!parsed.summary || !Array.isArray(parsed.flashcards) || !Array.isArray(parsed.quiz)) {
     throw new Error("AI response missing required fields");
   }
-  return parsed;
+  const tags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 8) : [];
+  const detectedYear =
+    typeof parsed.detected_year === "number" && parsed.detected_year >= 1990 && parsed.detected_year <= 2100
+      ? Math.round(parsed.detected_year)
+      : null;
+  return { ...parsed, tags, detected_year: detectedYear };
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -127,7 +149,7 @@ Deno.serve(async (req: Request) => {
     // thing as being allowed to reprocess them.
     const { data: material, error: materialError } = await admin
       .from("materials")
-      .select("id, uploaded_by, status")
+      .select("id, uploaded_by, status, type, content_year")
       .eq("id", materialId)
       .maybeSingle();
     if (materialError) throw materialError;
@@ -178,7 +200,7 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        messages: [{ role: "user", content: buildPrompt(text, title) }],
+        messages: [{ role: "user", content: buildPrompt(text, title, material.type ?? "Notes") }],
       }),
     });
 
@@ -207,7 +229,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    await admin.from("materials").update({ status: "ready", summary: result.summary, updated_at: new Date().toISOString() }).eq("id", materialId);
+    await admin
+      .from("materials")
+      .update({
+        status: "ready",
+        summary: result.summary,
+        tags: result.tags,
+        // Only fill content_year if it's currently unset — never overwrite
+        // a year the uploader (or an admin) deliberately entered.
+        ...(material.content_year == null && result.detected_year != null ? { content_year: result.detected_year } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", materialId);
 
     return jsonResponse({ ok: true });
   } catch (error) {
