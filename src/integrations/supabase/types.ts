@@ -96,6 +96,27 @@ export type Database = {
           },
         ]
       }
+      hero_slides: {
+        Row: {
+          created_at: string
+          id: string
+          image_path: string
+          position: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_path: string
+          position?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_path?: string
+          position?: number
+        }
+        Relationships: []
+      }
       material_requests: {
         Row: {
           course_code: string | null
@@ -139,6 +160,7 @@ export type Database = {
       }
       materials: {
         Row: {
+          content_year: number | null
           course_code: string | null
           created_at: string
           download_count: number
@@ -155,6 +177,7 @@ export type Database = {
           uploaded_by: string | null
         }
         Insert: {
+          content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
@@ -171,6 +194,7 @@ export type Database = {
           uploaded_by?: string | null
         }
         Update: {
+          content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
@@ -404,6 +428,7 @@ export type Database = {
     Functions: {
       bump_streak: { Args: { p_profile_id: string }; Returns: undefined }
       claim_initial_admin: { Args: never; Returns: boolean }
+      demote_admin_role: { Args: { p_user_id: string }; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
