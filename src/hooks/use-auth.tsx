@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
+type AppRole = Database["public"]["Enums"]["app_role"];
 
 type SignUpFields = {
   email: string;
@@ -19,6 +20,7 @@ type AuthContextValue = {
   session: Session | null;
   user: User | null;
   profile: Profile | null;
+  roles: AppRole[];
   loading: boolean;
   isAdmin: boolean;
   signUp: (fields: SignUpFields) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
@@ -32,11 +34,16 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [roles, setRoles] = useState<AppRole[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadProfile = async (userId: string) => {
-    const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+    const [{ data }, { data: roleRows }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+      supabase.from("user_roles").select("role").eq("user_id", userId),
+    ]);
     setProfile(data ?? null);
+    setRoles((roleRows ?? []).map((row) => row.role));
   };
 
   useEffect(() => {
@@ -56,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadProfile(newSession.user.id);
       } else {
         setProfile(null);
+        setRoles([]);
       }
     });
 
@@ -66,10 +74,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = async (fields: SignUpFields) => {
+    const emailRedirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
     const { data, error } = await supabase.auth.signUp({
       email: fields.email,
       password: fields.password,
       options: {
+        emailRedirectTo,
         data: {
           full_name: fields.fullName,
           student_number: fields.studentNumber,
@@ -106,8 +116,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         user: session?.user ?? null,
         profile,
+        roles,
         loading,
-        isAdmin: profile?.role === "admin",
+        isAdmin: roles.includes("admin"),
         signUp,
         signIn,
         signOut,

@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useCatalog, useOpenRequests, useProgrammes, useCourses, useCreateCourse } from "@/lib/queries";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { useState } from "react";
-import { Users, GraduationCap, FileText, Inbox, Plus, CheckCircle2, ShieldCheck, Copy, Info } from "lucide-react";
+import { Users, GraduationCap, FileText, Inbox, Plus, CheckCircle2, ShieldCheck, KeyRound, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -133,30 +133,36 @@ function AdminAuthGate({
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (fields: {
     email: string; password: string; fullName: string; studentNumber: string; school: string; programmeCode: string; year: number;
-  }) => Promise<{ error: string | null }>;
+  }) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
 }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
       if (mode === "signin") {
         const { error: err } = await signIn(email, password);
         if (err) throw new Error(err);
       } else {
-        const { error: err } = await signUp({
+        const { error: err, needsEmailConfirmation } = await signUp({
           email, password, fullName: fullName || "Admin",
           studentNumber: `ADM-${Date.now().toString().slice(-6)}`,
           school: "Administration", programmeCode: "ADMIN", year: 1,
         });
         if (err) throw new Error(err);
+        if (needsEmailConfirmation) {
+          setMessage("Check your email to confirm the admin account, then come back and sign in.");
+          setMode("signin");
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -182,6 +188,11 @@ function AdminAuthGate({
             {error}
           </div>
         )}
+        {message && (
+          <div className="mt-5 w-full rounded-xl border border-primary/30 bg-primary/10 p-3 text-left text-xs text-foreground">
+            {message}
+          </div>
+        )}
 
         <form onSubmit={submit} className="mt-6 w-full space-y-3 text-left">
           {mode === "signup" && (
@@ -199,7 +210,7 @@ function AdminAuthGate({
         </form>
 
         <button
-          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
+          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); setMessage(null); }}
           className="mt-6 text-xs font-semibold text-copper hover:underline"
         >
           {mode === "signin" ? "First time here? Create the admin account →" : "Have an account? Sign in →"}
@@ -210,8 +221,26 @@ function AdminAuthGate({
 }
 
 function AdminClaimGate({ userId }: { userId: string }) {
-  const sql = `update public.profiles set role = 'admin' where id = '${userId}';`;
-  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function claimAdmin() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const { data, error: claimError } = await supabase.rpc("claim_initial_admin");
+      if (claimError) throw claimError;
+      if (!data) throw new Error("An admin account already exists. Sign in with that admin account to manage Learnova.");
+      setMessage("Admin access created. Refreshing…");
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Admin setup failed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -222,20 +251,22 @@ function AdminClaimGate({ userId }: { userId: string }) {
         </div>
         <h1 className="mt-6 font-display text-3xl text-foreground">You're one step away.</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          You're signed in but this account isn't marked as admin yet. Run this one-liner in the Cloud database editor to promote yourself, then refresh.
+          You're signed in, but this account doesn't have admin access yet. If this is the first admin setup, claim it here.
         </p>
 
         <div className="mt-6 rounded-2xl border border-border bg-card p-4">
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
-            One-time bootstrap. After the first admin exists, you can promote others from the admin panel.
+            One-time bootstrap. Once an admin exists, this button locks itself and only admin accounts can manage the control room.
           </div>
-          <pre className="mt-3 overflow-x-auto rounded-xl bg-surface p-3 text-[11px] leading-relaxed text-foreground">{sql}</pre>
+          {error && <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-foreground">{error}</div>}
+          {message && <div className="mt-3 rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs text-foreground">{message}</div>}
           <button
-            onClick={() => { navigator.clipboard.writeText(sql); setCopied(true); setTimeout(() => setCopied(false), 1600); }}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+            onClick={claimAdmin}
+            disabled={busy || !userId}
+            className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft disabled:opacity-60"
           >
-            <Copy className="h-3.5 w-3.5" /> {copied ? "Copied" : "Copy SQL"}
+            <KeyRound className="h-4 w-4" /> {busy ? "Claiming access…" : "Claim first admin access"}
           </button>
         </div>
 
@@ -243,7 +274,7 @@ function AdminClaimGate({ userId }: { userId: string }) {
           onClick={() => window.location.reload()}
           className="mt-6 text-xs font-semibold text-copper hover:underline"
         >
-          I've run it — refresh →
+          Refresh status →
         </button>
       </div>
     </div>

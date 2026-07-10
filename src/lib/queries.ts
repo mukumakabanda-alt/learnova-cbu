@@ -21,7 +21,7 @@ export function useProgrammes() {
   return useQuery({
     queryKey: ["programmes"],
     queryFn: async (): Promise<ProgrammeRow[]> => {
-      const { data, error } = await supabase.from("programmes").select("*").order("name");
+      const { data, error } = await supabase.from("programmes").select("*").neq("code", "ADMIN").order("name");
       if (error) throw error;
       return (data ?? []) as ProgrammeRow[];
     },
@@ -130,7 +130,7 @@ export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).single();
+      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },
@@ -181,6 +181,7 @@ export function useCreateRequest() {
 }
 
 export function useOpenRequests() {
+  const { user, isAdmin } = useAuth();
   return useQuery({
     queryKey: ["requests"],
     queryFn: async (): Promise<RequestWithCourse[]> => {
@@ -191,6 +192,7 @@ export function useOpenRequests() {
       if (error) throw error;
       return (data ?? []) as RequestWithCourse[];
     },
+    enabled: !!user && isAdmin,
   });
 }
 
