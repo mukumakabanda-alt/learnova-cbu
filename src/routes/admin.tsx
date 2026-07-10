@@ -133,7 +133,7 @@ function AdminAuthGate({
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (fields: {
     email: string; password: string; fullName: string; studentNumber: string; school: string; programmeCode: string; year: number;
-  }) => Promise<{ error: string | null }>;
+  }) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
 }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
