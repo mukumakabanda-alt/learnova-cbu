@@ -11,6 +11,19 @@ type MaterialType = (typeof MATERIAL_TYPES)[number];
 
 const STAGES = ["Reading document…", "Uploading…", "Adding to catalogue…", "Generating summary, flashcards & quiz…"];
 
+// Supabase's Postgrest/Storage errors are real Error instances in this
+// project's SDK version, but this handles any thrown value defensively —
+// a plain object with a `.message` (or a raw string) still surfaces its
+// real reason instead of silently falling back to the generic copy.
+function describeUploadError(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e.trim()) return e;
+  if (e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string") {
+    return (e as { message: string }).message;
+  }
+  return "Something went wrong uploading that file — mind trying again?";
+}
+
 export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -105,7 +118,8 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       setDone(true);
       setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 500);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong uploading that file — mind trying again?");
+      console.error("Upload failed:", e);
+      setError(describeUploadError(e));
     } finally {
       setBusy(false);
     }
@@ -254,4 +268,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-}
+    }
