@@ -181,6 +181,7 @@ export function useCreateRequest() {
 }
 
 export function useOpenRequests() {
+  const { user, isAdmin } = useAuth();
   return useQuery({
     queryKey: ["requests"],
     queryFn: async (): Promise<RequestWithCourse[]> => {
@@ -191,6 +192,7 @@ export function useOpenRequests() {
       if (error) throw error;
       return (data ?? []) as RequestWithCourse[];
     },
+    enabled: !!user && isAdmin,
   });
 }
 
