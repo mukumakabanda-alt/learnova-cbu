@@ -7,13 +7,25 @@
 //
 // Env vars used (all auto-provided once Lovable Cloud is enabled on this
 // project — nothing to configure by hand):
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, LOVABLE_API_KEY
+//   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, LOVABLE_API_KEY
+//
+// Security model (see supabase/migrations/0002_security_and_reliability_fixes.sql
+// for the matching pipeline_invocations table):
+//   1. The caller's own JWT (forwarded automatically by supabase.functions.invoke)
+//      is used to identify who is calling — never trusted purely from the body.
+//   2. The service-role client is used only to answer "who owns this material"
+//      and to perform the writes the pipeline itself needs — never to decide
+//      whether the caller is allowed to act.
+//   3. A material can only be (re)processed while it is genuinely awaiting
+//      processing, by its owner or an admin, and only a bounded number of
+//      times per user in a rolling window.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 // Check Cloud → AI in the Lovable editor for the current recommended
@@ -21,6 +33,11 @@ const corsHeaders = {
 // does shift over time.
 const MODEL = "google/gemini-2.5-flash";
 const MAX_INPUT_CHARS = 40000;
+
+// Abuse guard: at most this many pipeline runs per user in the rolling
+// window below. Tune once real usage patterns are known.
+const RATE_LIMIT_MAX_CALLS = 5;
+const RATE_LIMIT_WINDOW_MINUTES = 10;
 
 type PipelineResult = {
   summary: string;
@@ -55,21 +72,43 @@ function extractJson(raw: string): PipelineResult {
   return parsed;
 }
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
 
-  if (!supabaseUrl || !serviceRoleKey || !lovableApiKey) {
-    return new Response(JSON.stringify({ error: "Missing required environment secrets" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  if (!supabaseUrl || !anonKey || !serviceRoleKey || !lovableApiKey) {
+    return jsonResponse({ error: "Missing required environment secrets" }, 500);
   }
 
+  // Service-role client: bypasses RLS. Used ONLY for reads that answer
+  // ownership questions definitively, and for the pipeline's own writes.
   const admin = createClient(supabaseUrl, serviceRoleKey);
+
+  // User-scoped client: carries the caller's own JWT (supabase.functions.invoke
+  // forwards the Authorization header automatically), so auth.getUser() tells
+  // us who is really calling — never trust materialId/text alone for that.
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const callerClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: userData, error: userError } = await callerClient.auth.getUser();
+  const callerId = userData?.user?.id;
+  if (userError || !callerId) {
+    return jsonResponse({ error: "Sign in required." }, 401);
+  }
 
   let materialId: string | undefined;
   try {
@@ -79,11 +118,54 @@ Deno.serve(async (req: Request) => {
     const title: string = body.title ?? "this document";
 
     if (!materialId || !text.trim()) {
-      return new Response(JSON.stringify({ error: "materialId and text are required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "materialId and text are required" }, 400);
     }
+
+    // Ownership + state check. Done explicitly in code rather than relying
+    // on row visibility as a proxy for permission — "ready"/"catalog_only"
+    // materials are visible to everyone by design, which is not the same
+    // thing as being allowed to reprocess them.
+    const { data: material, error: materialError } = await admin
+      .from("materials")
+      .select("id, uploaded_by, status")
+      .eq("id", materialId)
+      .maybeSingle();
+    if (materialError) throw materialError;
+    if (!material) return jsonResponse({ error: "Material not found." }, 404);
+
+    const { data: callerProfile } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", callerId)
+      .maybeSingle();
+    const callerIsAdmin = callerProfile?.role === "admin";
+
+    if (material.uploaded_by !== callerId && !callerIsAdmin) {
+      return jsonResponse({ error: "You don't have permission to process this material." }, 403);
+    }
+    if (material.status !== "processing") {
+      return jsonResponse({ error: "This material isn't awaiting processing." }, 409);
+    }
+
+    // Rate limit: count this caller's pipeline runs in the trailing window.
+    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60_000).toISOString();
+    const { count, error: countError } = await admin
+      .from("pipeline_invocations")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", callerId)
+      .gte("created_at", windowStart);
+    if (countError) throw countError;
+
+    if ((count ?? 0) >= RATE_LIMIT_MAX_CALLS) {
+      return jsonResponse(
+        { error: `Too many requests — try again in a few minutes (limit: ${RATE_LIMIT_MAX_CALLS} per ${RATE_LIMIT_WINDOW_MINUTES} min).` },
+        429,
+      );
+    }
+
+    // Record this invocation before calling the AI gateway, so two requests
+    // racing each other still both count toward the limit.
+    await admin.from("pipeline_invocations").insert({ user_id: callerId, material_id: materialId });
 
     const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -121,15 +203,12 @@ Deno.serve(async (req: Request) => {
 
     await admin.from("materials").update({ status: "ready", summary: result.summary, updated_at: new Date().toISOString() }).eq("id", materialId);
 
-    return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return jsonResponse({ ok: true });
   } catch (error) {
     console.error(error);
     if (materialId) {
       await admin.from("materials").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", materialId);
     }
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
 });
