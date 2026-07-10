@@ -12,7 +12,7 @@ type RequestRow = Database["public"]["Tables"]["material_requests"]["Row"];
 type SavedRow = Database["public"]["Tables"]["saved_materials"]["Row"];
 
 type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
-type MaterialWithCourse = MaterialRow & { courses: { title: string; code: string } | null };
+export type MaterialWithCourse = MaterialRow & { courses: { title: string; code: string } | null };
 type RequestWithCourse = RequestRow & { courses: { title: string } | null };
 type SavedWithMaterial = SavedRow & { materials: MaterialWithCourse | null };
 
@@ -116,7 +116,7 @@ export function useCatalog(search?: string) {
       let q = supabase
         .from("materials")
         .select("*, courses(title, code)")
-        .in("status", ["ready", "processing"])
+        .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
       if (search?.trim()) q = q.ilike("title", `%${search}%`);
       const { data, error } = await q;
@@ -136,6 +136,67 @@ export function useMaterial(id: string) {
     },
     enabled: !!id,
     refetchInterval: (query) => (query.state.data?.status === "processing" ? 3000 : false),
+  });
+}
+
+// Powers two things on the study page from one query: "similar past
+// papers for this course" (pass type: "Past Paper") and "popular in this
+// course" (no type filter). Ordered by download_count first so genuinely
+// well-used material surfaces before merely-recent material.
+export function useRelatedMaterials(
+  courseCode: string | null | undefined,
+  options: { excludeId?: string; type?: string; limit?: number } = {},
+) {
+  const { excludeId, type, limit = 6 } = options;
+  return useQuery({
+    queryKey: ["related-materials", courseCode, type, excludeId, limit],
+    queryFn: async (): Promise<MaterialRow[]> => {
+      if (!courseCode) return [];
+      let q = supabase
+        .from("materials")
+        .select("*")
+        .eq("course_code", courseCode)
+        .in("status", ["ready", "catalog_only"])
+        .order("download_count", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(limit + 1); // +1 so we still have `limit` results after excluding the current one
+      if (type) q = q.eq("type", type);
+      const { data, error } = await q;
+      if (error) throw error;
+      return ((data ?? []) as MaterialRow[]).filter((m) => m.id !== excludeId).slice(0, limit);
+    },
+    enabled: !!courseCode,
+  });
+}
+
+// Fire-and-forget counter bump on download. Uses a SECURITY DEFINER RPC
+// (see supabase/migrations/0003_study_upgrade.sql) rather than an UPDATE,
+// because the materials RLS policy only allows a row's owner/admin to
+// UPDATE it — direct updates would silently no-op for every other student.
+export function useIncrementDownload() {
+  return useMutation({
+    mutationFn: async (materialId: string) => {
+      const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
+      if (error) throw error;
+    },
+  });
+}
+
+// Recommended YouTube videos for a document — see
+// supabase/functions/youtube-recommendations. Soft-fails to an empty list
+// (never throws), since this is a nice-to-have that should never block or
+// visibly break the study page if the API key isn't configured yet.
+export function useYoutubeRecommendations(query: string | null | undefined) {
+  return useQuery({
+    queryKey: ["youtube-recommendations", query],
+    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnail: string | null }[]> => {
+      const { data, error } = await supabase.functions.invoke("youtube-recommendations", { body: { query } });
+      if (error) return [];
+      return data?.videos ?? [];
+    },
+    enabled: !!query?.trim(),
+    staleTime: 1000 * 60 * 60, // an hour — these don't need to feel "live"
+    retry: false,
   });
 }
 
@@ -263,4 +324,4 @@ export function useCreateCourse() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
   });
-}
+      }
