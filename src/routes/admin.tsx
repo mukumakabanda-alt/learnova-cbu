@@ -140,23 +140,29 @@ function AdminAuthGate({
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
       if (mode === "signin") {
         const { error: err } = await signIn(email, password);
         if (err) throw new Error(err);
       } else {
-        const { error: err } = await signUp({
+        const { error: err, needsEmailConfirmation } = await signUp({
           email, password, fullName: fullName || "Admin",
           studentNumber: `ADM-${Date.now().toString().slice(-6)}`,
           school: "Administration", programmeCode: "ADMIN", year: 1,
         });
         if (err) throw new Error(err);
+        if (needsEmailConfirmation) {
+          setMessage("Check your email to confirm the admin account, then come back and sign in.");
+          setMode("signin");
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -182,6 +188,11 @@ function AdminAuthGate({
             {error}
           </div>
         )}
+        {message && (
+          <div className="mt-5 w-full rounded-xl border border-primary/30 bg-primary/10 p-3 text-left text-xs text-foreground">
+            {message}
+          </div>
+        )}
 
         <form onSubmit={submit} className="mt-6 w-full space-y-3 text-left">
           {mode === "signup" && (
@@ -199,7 +210,7 @@ function AdminAuthGate({
         </form>
 
         <button
-          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
+          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); setMessage(null); }}
           className="mt-6 text-xs font-semibold text-copper hover:underline"
         >
           {mode === "signin" ? "First time here? Create the admin account →" : "Have an account? Sign in →"}
@@ -263,7 +274,7 @@ function AdminClaimGate({ userId }: { userId: string }) {
           onClick={() => window.location.reload()}
           className="mt-6 text-xs font-semibold text-copper hover:underline"
         >
-          I've run it — refresh →
+          Refresh status →
         </button>
       </div>
     </div>

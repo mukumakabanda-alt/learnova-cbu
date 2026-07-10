@@ -130,7 +130,7 @@ export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).single();
+      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },

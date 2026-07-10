@@ -133,12 +133,14 @@ Deno.serve(async (req: Request) => {
     if (materialError) throw materialError;
     if (!material) return jsonResponse({ error: "Material not found." }, 404);
 
-    const { data: callerProfile } = await admin
-      .from("profiles")
+    const { data: callerAdminRole, error: roleError } = await admin
+      .from("user_roles")
       .select("role")
-      .eq("id", callerId)
+      .eq("user_id", callerId)
+      .eq("role", "admin")
       .maybeSingle();
-    const callerIsAdmin = callerProfile?.role === "admin";
+    if (roleError) throw roleError;
+    const callerIsAdmin = callerAdminRole?.role === "admin";
 
     if (material.uploaded_by !== callerId && !callerIsAdmin) {
       return jsonResponse({ error: "You don't have permission to process this material." }, 403);
@@ -169,7 +171,11 @@ Deno.serve(async (req: Request) => {
 
     const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${lovableApiKey}`, "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Lovable-API-Key": lovableApiKey,
+        "X-Lovable-AIG-SDK": "learnova-edge-fetch",
+      },
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: "user", content: buildPrompt(text, title) }],
