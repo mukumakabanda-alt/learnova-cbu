@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import campusBuildings from "@/assets/campus-buildings.asset.json";
 import campusGate from "@/assets/campus-gate.asset.json";
 import campusGarden from "@/assets/campus-garden.asset.json";
@@ -19,31 +19,75 @@ const SLIDES = [
 
 const INTERVAL_MS = 4200;
 
-// One dedicated hero image slot. Each photo crossfades into the next
-// — quiet, cinematic, never a jump. Keeps the same on-page position as
-// the previous strip, just consolidated into a single frame.
+// One dedicated hero image slot. Each photo crossfades into the next —
+// quiet, cinematic, never a jump.
+//
+// Perf: only TWO <img> DOM nodes ever exist (two persistent "layers" whose
+// `src` gets swapped), never all 12 at once — the old version mounted every
+// slide simultaneously above the fold, which meant ~3MB of images loaded
+// before anyone had scrolled a pixel. Each upcoming photo is only fetched
+// (via a throwaway Image() object, no DOM node) a moment before it's shown,
+// and the whole rotation — so all future network requests — pauses
+// entirely while the strip is scrolled off-screen.
 export function HeroImageStrip() {
-  const [active, setActive] = useState(0);
+  const [layerSrcs, setLayerSrcs] = useState<[string, string]>([
+    SLIDES[0].url,
+    SLIDES[1 % SLIDES.length].url,
+  ]);
+  const [activeLayer, setActiveLayer] = useState<0 | 1>(0);
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [isVisible, setIsVisible] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setActive((i) => (i + 1) % SLIDES.length);
-    }, INTERVAL_MS);
-    return () => clearInterval(id);
+    const node = containerRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { threshold: 0.1 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!isVisible) return;
+    let cancelled = false;
+
+    const id = setInterval(() => {
+      const nextIndex = (slideIndex + 1) % SLIDES.length;
+      const nextUrl = SLIDES[nextIndex].url;
+      const preload = new Image();
+      preload.onload = () => {
+        if (cancelled) return;
+        setLayerSrcs((prev) => {
+          const updated: [string, string] = [...prev];
+          updated[activeLayer === 0 ? 1 : 0] = nextUrl;
+          return updated;
+        });
+        setActiveLayer((l) => (l === 0 ? 1 : 0));
+        setSlideIndex(nextIndex);
+      };
+      preload.src = nextUrl;
+    }, INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isVisible, slideIndex, activeLayer]);
+
   return (
-    <div className="w-full bg-surface px-4 py-5 sm:py-6 lg:py-7">
+    <div ref={containerRef} className="w-full bg-surface px-4 py-5 sm:py-6 lg:py-7">
       <figure className="relative mx-auto aspect-[16/9] w-full max-w-4xl overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-elegant sm:aspect-[21/9]">
-        {SLIDES.map((photo, i) => (
+        {layerSrcs.map((src, layer) => (
           <img
-            key={i}
-            src={photo.url}
+            key={layer}
+            src={src}
             alt=""
-            loading={i === 0 ? "eager" : "lazy"}
-            aria-hidden={i !== active}
+            loading={layer === 0 ? "eager" : "lazy"}
             className="absolute inset-0 h-full w-full object-cover transition-opacity duration-[1400ms] ease-in-out"
-            style={{ opacity: i === active ? 1 : 0 }}
+            style={{ opacity: layer === activeLayer ? 1 : 0 }}
           />
         ))}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
@@ -52,7 +96,7 @@ export function HeroImageStrip() {
             <span
               key={i}
               className={`h-1.5 rounded-full transition-all duration-500 ${
-                i === active ? "w-5 bg-gold" : "w-1.5 bg-white/40"
+                i === slideIndex ? "w-5 bg-gold" : "w-1.5 bg-white/40"
               }`}
             />
           ))}
@@ -60,4 +104,4 @@ export function HeroImageStrip() {
       </figure>
     </div>
   );
-}
+  }
