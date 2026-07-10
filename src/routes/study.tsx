@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
@@ -16,6 +17,19 @@ export const Route = createFileRoute("/study")({
   component: StudyHub,
 });
 
+function statusLabel(status: string) {
+  switch (status) {
+    case "processing":
+      return "Generating…";
+    case "catalog_only":
+      return "Saved · no study tools yet";
+    case "failed":
+      return "Needs a re-upload";
+    default:
+      return "Ready";
+  }
+}
+
 function StudyHub() {
   const [q, setQ] = useState("");
   const { data: materials, isLoading } = useCatalog(q);
@@ -27,7 +41,7 @@ function StudyHub() {
         <div className="text-xs font-medium uppercase tracking-[0.2em] text-copper">Study</div>
         <h1 className="mt-2 font-display text-4xl leading-tight text-foreground sm:text-5xl">One tap: summary, flashcards, quiz.</h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-          Upload any document and Learnova turns it into study tools in under a minute — then it joins the catalogue below for everyone else too.
+          Upload any document — PDF, Word, PowerPoint, text, a zip of files, whatever you've got — and Learnova turns it into study tools in under a minute, then it joins the catalogue below for everyone else too.
         </p>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -48,21 +62,27 @@ function StudyHub() {
               {isLoading ? (
                 <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
               ) : materials?.length ? (
-                materials.map((m) => (
-                  <Link
+                materials.map((m, idx) => (
+                  <motion.div
                     key={m.id}
-                    to="/study/$id"
-                    params={{ id: m.id }}
-                    className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, delay: Math.min(idx * 0.035, 0.4) }}
                   >
-                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {m.courses?.code ?? "General"} · {m.status === "processing" ? "Generating…" : "Ready"}
+                    <Link
+                      to="/study/$id"
+                      params={{ id: m.id }}
+                      className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft"
+                    >
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {m.courses?.code ?? "General"} · {statusLabel(m.status)}
+                        </div>
                       </div>
-                    </div>
-                  </Link>
+                    </Link>
+                  </motion.div>
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-10 text-center text-sm text-muted-foreground">
