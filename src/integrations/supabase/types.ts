@@ -14,16 +14,408 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      courses: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          lecturer: string | null
+          programme_code: string | null
+          semester: number
+          title: string
+          topics: string[]
+          updated_at: string
+          year: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          lecturer?: string | null
+          programme_code?: string | null
+          semester?: number
+          title: string
+          topics?: string[]
+          updated_at?: string
+          year?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          lecturer?: string | null
+          programme_code?: string | null
+          semester?: number
+          title?: string
+          topics?: string[]
+          updated_at?: string
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "courses_programme_code_fkey"
+            columns: ["programme_code"]
+            isOneToOne: false
+            referencedRelation: "programmes"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      flashcards: {
+        Row: {
+          answer: string
+          created_at: string
+          id: string
+          material_id: string
+          position: number
+          question: string
+        }
+        Insert: {
+          answer: string
+          created_at?: string
+          id?: string
+          material_id: string
+          position?: number
+          question: string
+        }
+        Update: {
+          answer?: string
+          created_at?: string
+          id?: string
+          material_id?: string
+          position?: number
+          question?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flashcards_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      material_requests: {
+        Row: {
+          course_code: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          requested_by: string
+          status: Database["public"]["Enums"]["request_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          course_code?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          requested_by: string
+          status?: Database["public"]["Enums"]["request_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          course_code?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          requested_by?: string
+          status?: Database["public"]["Enums"]["request_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_requests_course_code_fkey"
+            columns: ["course_code"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      materials: {
+        Row: {
+          course_code: string | null
+          created_at: string
+          download_count: number
+          file_path: string | null
+          id: string
+          pages: number | null
+          source: string
+          status: Database["public"]["Enums"]["material_status"]
+          summary: string | null
+          tags: string[]
+          title: string
+          type: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          course_code?: string | null
+          created_at?: string
+          download_count?: number
+          file_path?: string | null
+          id?: string
+          pages?: number | null
+          source?: string
+          status?: Database["public"]["Enums"]["material_status"]
+          summary?: string | null
+          tags?: string[]
+          title: string
+          type?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          course_code?: string | null
+          created_at?: string
+          download_count?: number
+          file_path?: string | null
+          id?: string
+          pages?: number | null
+          source?: string
+          status?: Database["public"]["Enums"]["material_status"]
+          summary?: string | null
+          tags?: string[]
+          title?: string
+          type?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "materials_course_code_fkey"
+            columns: ["course_code"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      pipeline_invocations: {
+        Row: {
+          created_at: string
+          id: string
+          material_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          material_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          material_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_invocations_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          current_streak: number
+          full_name: string
+          id: string
+          last_studied_on: string | null
+          longest_streak: number
+          phone: string | null
+          programme_code: string
+          school: string
+          semester: number
+          student_number: string | null
+          updated_at: string
+          weekly_progress: number
+          year: number
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          current_streak?: number
+          full_name?: string
+          id: string
+          last_studied_on?: string | null
+          longest_streak?: number
+          phone?: string | null
+          programme_code?: string
+          school?: string
+          semester?: number
+          student_number?: string | null
+          updated_at?: string
+          weekly_progress?: number
+          year?: number
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          current_streak?: number
+          full_name?: string
+          id?: string
+          last_studied_on?: string | null
+          longest_streak?: number
+          phone?: string | null
+          programme_code?: string
+          school?: string
+          semester?: number
+          student_number?: string | null
+          updated_at?: string
+          weekly_progress?: number
+          year?: number
+        }
+        Relationships: []
+      }
+      programmes: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          duration_years: number
+          name: string
+          school: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          duration_years?: number
+          name: string
+          school: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          duration_years?: number
+          name?: string
+          school?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      quiz_questions: {
+        Row: {
+          correct_index: number
+          created_at: string
+          explanation: string
+          id: string
+          material_id: string
+          options: string[]
+          position: number
+          question: string
+        }
+        Insert: {
+          correct_index?: number
+          created_at?: string
+          explanation?: string
+          id?: string
+          material_id: string
+          options?: string[]
+          position?: number
+          question: string
+        }
+        Update: {
+          correct_index?: number
+          created_at?: string
+          explanation?: string
+          id?: string
+          material_id?: string
+          options?: string[]
+          position?: number
+          question?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quiz_questions_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      saved_materials: {
+        Row: {
+          created_at: string
+          material_id: string
+          profile_id: string
+        }
+        Insert: {
+          created_at?: string
+          material_id: string
+          profile_id: string
+        }
+        Update: {
+          created_at?: string
+          material_id?: string
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_materials_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      bump_streak: { Args: { p_profile_id: string }; Returns: undefined }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_admin: { Args: { _user_id?: string }; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "lecturer" | "student"
+      material_status: "processing" | "ready" | "failed" | "catalog_only"
+      request_status: "open" | "fulfilled" | "closed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +542,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "lecturer", "student"],
+      material_status: ["processing", "ready", "failed", "catalog_only"],
+      request_status: ["open", "fulfilled", "closed"],
+    },
   },
 } as const
