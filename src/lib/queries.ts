@@ -58,21 +58,36 @@ export function useCourse(code: string) {
   });
 }
 
+// Course search. Deliberately filters client-side rather than building a
+// dynamic PostgREST `.or(...)` filter string out of the raw query: that
+// approach broke silently the moment a search contained a comma or
+// parenthesis (both totally normal to type), because those characters have
+// special meaning in PostgREST's filter syntax. Client-side filtering also
+// lets us match on `topics` (a text array — the homepage's own "Try IFRS"
+// example is a topic tag, not a code/title/lecturer) and `description`,
+// which the old server-side filter never covered at all. The course
+// catalog is small (tens to low hundreds of rows for a single university),
+// so fetching it once and filtering in memory is simple and correct; if
+// this ever needs to scale to thousands of courses, move to a Postgres
+// `tsvector` full-text index instead of hand-rolling filter strings again.
 export function useSearchCourses(query: string) {
   return useQuery({
     queryKey: ["search-courses", query],
     queryFn: async (): Promise<CourseWithProgramme[]> => {
-      if (!query.trim()) {
-        const { data, error } = await supabase.from("courses").select("*, programmes(name, school)").order("code");
-        if (error) throw error;
-        return (data ?? []) as CourseWithProgramme[];
-      }
       const { data, error } = await supabase
         .from("courses")
         .select("*, programmes(name, school)")
-        .or(`code.ilike.%${query}%,title.ilike.%${query}%,lecturer.ilike.%${query}%`);
+        .order("code");
       if (error) throw error;
-      return (data ?? []) as CourseWithProgramme[];
+      const all = (data ?? []) as CourseWithProgramme[];
+
+      const needle = query.trim().toLowerCase();
+      if (!needle) return all;
+
+      return all.filter((c) => {
+        const haystacks = [c.code, c.title, c.lecturer ?? "", c.description ?? "", ...(c.topics ?? [])];
+        return haystacks.some((h) => h.toLowerCase().includes(needle));
+      });
     },
   });
 }
@@ -204,7 +219,11 @@ export function useToggleSaved() {
       if (!user) throw new Error("Sign in to save materials");
       if (save) {
         const { error } = await supabase.from("saved_materials").insert({ profile_id: user.id, material_id: materialId });
-        if (error) throw error;
+        // Postgres code 23505 = unique_violation. A fast double-tap can fire
+        // this same insert twice before the UI re-renders with the "saved"
+        // state — the row already existing is not a real failure from the
+        // user's point of view, so don't surface it as one.
+        if (error && error.code !== "23505") throw error;
       } else {
         const { error } = await supabase.from("saved_materials").delete().eq("profile_id", user.id).eq("material_id", materialId);
         if (error) throw error;
