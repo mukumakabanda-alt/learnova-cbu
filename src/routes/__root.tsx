@@ -88,8 +88,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "Learnova — Study smarter at CBU" },
       { name: "twitter:description", content: "Find course notes, past papers, summaries and revision tools built for Copperbelt University students. Independent. Fast. Free to browse." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/35f556dc-2dc4-405f-ad92-3748349877ce/id-preview-fc9c79b1--83668db3-1b20-406a-8160-c486b702c1ae.lovable.app-1783544749967.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/35f556dc-2dc4-405f-ad92-3748349877ce/id-preview-fc9c79b1--83668db3-1b20-406a-8160-c486b702c1ae.lovable.app-1783544749967.png" },
+      // TODO: replace with a real designed 1200x630 share image at
+      // public/og-image.png before launch — this used to point at a raw
+      // Lovable preview-screenshot URL, which isn't a designed share asset.
+      { property: "og:image", content: "/og-image.png" },
+      { name: "twitter:image", content: "/og-image.png" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -131,4 +134,4 @@ function RootComponent() {
       </AuthProvider>
     </QueryClientProvider>
   );
-                                                                                }
+        }
