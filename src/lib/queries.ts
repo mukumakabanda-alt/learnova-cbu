@@ -21,7 +21,7 @@ export function useProgrammes() {
   return useQuery({
     queryKey: ["programmes"],
     queryFn: async (): Promise<ProgrammeRow[]> => {
-      const { data, error } = await supabase.from("programmes").select("*").order("name");
+      const { data, error } = await supabase.from("programmes").select("*").neq("code", "ADMIN").order("name");
       if (error) throw error;
       return (data ?? []) as ProgrammeRow[];
     },
