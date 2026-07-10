@@ -91,12 +91,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       // TODO: replace with a real designed 1200x630 share image at
       // public/og-image.png before launch — this used to point at a raw
       // Lovable preview-screenshot URL, which isn't a designed share asset.
-      { property: "og:image", content: "/og-image.png" },
-      { name: "twitter:image", content: "/og-image.png" },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/TlZCstz42kb61wvj584mCN1viVZ2/social-images/social-1783650375052-file_000000001f7c724394931cf5df621203.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/TlZCstz42kb61wvj584mCN1viVZ2/social-images/social-1783650375052-file_000000001f7c724394931cf5df621203.webp" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" },
