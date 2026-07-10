@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useCourse, useMaterialsForCourse, useToggleSaved, useSavedMaterials } from "@/lib/queries";
@@ -14,6 +15,20 @@ export const Route = createFileRoute("/courses/$code")({
   component: CoursePage,
 });
 
+function materialStatusLabel(status: string): string {
+  switch (status) {
+    case "processing":
+      return "Generating study tools…";
+    case "ready":
+      return "Summary, flashcards & quiz ready";
+    case "failed":
+      return "Processing failed — try re-uploading";
+    case "catalog_only":
+    default:
+      return "Catalogued";
+  }
+}
+
 function CoursePage() {
   const { code } = Route.useParams();
   const { data: course, isLoading } = useCourse(code);
@@ -22,6 +37,29 @@ function CoursePage() {
   const { data: saved } = useSavedMaterials();
   const toggleSaved = useToggleSaved();
   const savedIds = new Set((saved ?? []).map((s) => s.material_id));
+
+  // Tracks which specific bookmark buttons are mid-request, so a fast
+  // double-tap on the same material is ignored instead of firing the
+  // mutation twice — without disabling every OTHER bookmark button on the
+  // page while one save is in flight.
+  const [pendingSaveIds, setPendingSaveIds] = useState<Set<string>>(new Set());
+
+  function handleToggleSaved(materialId: string, nextSaved: boolean) {
+    if (pendingSaveIds.has(materialId)) return;
+    setPendingSaveIds((prev) => new Set(prev).add(materialId));
+    toggleSaved.mutate(
+      { materialId, save: nextSaved },
+      {
+        onSettled: () => {
+          setPendingSaveIds((prev) => {
+            const next = new Set(prev);
+            next.delete(materialId);
+            return next;
+          });
+        },
+      },
+    );
+  }
 
   if (isLoading) return <div className="min-h-screen bg-background" />;
   if (!course) {
@@ -70,22 +108,31 @@ function CoursePage() {
                 Nothing uploaded for this course yet — be the first.
               </div>
             )}
-            {(materials ?? []).map((m) => (
-              <div key={m.id} className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
-                <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></Link>
-                <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2"><span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>{m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}</div>
-                  <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
-                  <div className="text-xs text-muted-foreground">{m.status === "processing" ? "Generating study tools…" : m.status === "ready" ? "Summary, flashcards & quiz ready" : "Catalogued"}</div>
-                </Link>
-                <button onClick={() => toggleSaved.mutate({ materialId: m.id, save: !savedIds.has(m.id) })} className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors ${savedIds.has(m.id) ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"}`}>
-                  <Bookmark className="h-4 w-4" />
-                </button>
-                {m.file_path && (
-                  <button onClick={() => downloadMaterial(m.file_path)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
-                )}
-              </div>
-            ))}
+            {(materials ?? []).map((m) => {
+              const isSaved = savedIds.has(m.id);
+              const isPending = pendingSaveIds.has(m.id);
+              return (
+                <div key={m.id} className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
+                  <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></Link>
+                  <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2"><span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>{m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}</div>
+                    <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
+                    <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
+                  </Link>
+                  <button
+                    onClick={() => handleToggleSaved(m.id, !isSaved)}
+                    disabled={isPending}
+                    aria-pressed={isSaved}
+                    className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:cursor-wait disabled:opacity-60 ${isSaved ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"}`}
+                  >
+                    <Bookmark className="h-4 w-4" />
+                  </button>
+                  {m.file_path && (
+                    <button onClick={() => downloadMaterial(m.file_path)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <h2 className="mt-10 font-display text-2xl text-foreground">Course outline</h2>
@@ -123,4 +170,4 @@ function CoursePage() {
       <MobileTabBar />
     </div>
   );
-}
+        }
