@@ -1,26 +1,37 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+
+// useLayoutEffect is a no-op during SSR (and warns about it) — fall back to
+// useEffect on the server so the warning never fires, while still getting
+// the synchronous, pre-paint behavior on the client where it matters.
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 // Netflix-style brand moment: once per browser session, a brief copper
 // seam cracks across the dark screen and the wordmark resolves out of it
 // before the real app appears. Session-scoped (not per-navigation) so it
 // never gets in the way after the first load.
+//
+// Both the server render and the very first client render always return
+// `null` — that keeps SSR markup and pre-hydration client markup identical
+// (no hydration mismatch warning). The layout effect below then runs
+// SYNCHRONOUSLY, before the browser paints anything for that commit, so
+// the choice between "show splash" and "show nothing" is made before the
+// real page ever has a chance to flash on screen first.
 export function BrandIntro() {
   const [phase, setPhase] = useState<"hidden" | "playing" | "done">("hidden");
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  useIsomorphicLayoutEffect(() => {
     const seen = sessionStorage.getItem("learnova-intro-seen");
-    if (seen) {
-      setPhase("done");
-      return;
-    }
-    setPhase("playing");
+    setPhase(seen ? "done" : "playing");
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "playing") return;
     const t = setTimeout(() => {
       setPhase("done");
       sessionStorage.setItem("learnova-intro-seen", "1");
     }, 1900);
     return () => clearTimeout(t);
-  }, []);
+  }, [phase]);
 
   if (phase !== "playing") return null;
 
@@ -49,4 +60,4 @@ export function BrandIntro() {
       `}</style>
     </div>
   );
-}
+      }
