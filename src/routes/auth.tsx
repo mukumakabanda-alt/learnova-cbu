@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Logo } from "@/components/SiteHeader";
 import { useMemo, useState } from "react";
-import { ArrowRight, Info, MailCheck } from "lucide-react";
+import { ArrowRight, Info } from "lucide-react";
 import campusGate from "@/assets/campus-gate.asset.json";
 import { useAuth } from "@/hooks/use-auth";
 import { useProgrammes } from "@/lib/queries";
@@ -31,11 +31,15 @@ function Auth() {
   const [year, setYear] = useState("1");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [pendingConfirmation, setPendingConfirmation] = useState(false);
 
   const schools = useMemo(() => Array.from(new Set((programmes ?? []).map((p) => p.school))).sort(), [programmes]);
   const programmesForSchool = useMemo(() => (programmes ?? []).filter((p) => p.school === school), [programmes, school]);
 
+  // Sign-up is immediate — no "check your email" step. Create the account,
+  // land straight in the dashboard. (See use-auth.tsx for what happens in
+  // the one edge case where the Supabase project itself still requires
+  // email confirmation — that's a project setting, not something this
+  // screen controls.)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -43,15 +47,8 @@ function Auth() {
     try {
       if (mode === "signup") {
         if (!school || !programmeCode) throw new Error("Pick your school and programme.");
-        const { error: err, needsEmailConfirmation } = await signUp({ email, password, fullName, studentNumber, school, programmeCode, year: Number(year) });
+        const { error: err } = await signUp({ email, password, fullName, studentNumber, school, programmeCode, year: Number(year) });
         if (err) throw new Error(err);
-        if (needsEmailConfirmation) {
-          // No session exists yet — navigating to /dashboard here would land
-          // on a signed-out dashboard with zero explanation. Show a proper
-          // "check your email" screen instead.
-          setPendingConfirmation(true);
-          return;
-        }
       } else {
         const { error: err } = await signIn(email, password);
         if (err) throw new Error(err);
@@ -62,28 +59,6 @@ function Auth() {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  if (pendingConfirmation) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-background px-6 text-center">
-        <div className="max-w-sm">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-primary/15 text-primary">
-            <MailCheck className="h-6 w-6" />
-          </div>
-          <h2 className="mt-6 font-display text-3xl text-foreground">Check your email</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            We've sent a confirmation link to <span className="font-semibold text-foreground">{email}</span>. Click it, then come back and sign in.
-          </p>
-          <button
-            onClick={() => { setPendingConfirmation(false); setMode("signin"); setError(null); }}
-            className="mt-6 inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft hover:opacity-95"
-          >
-            Back to sign in
-          </button>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -186,4 +161,4 @@ function SelectField({ label, value, onChange, options }: { label: string; value
       </select>
     </label>
   );
-  }
+    }
