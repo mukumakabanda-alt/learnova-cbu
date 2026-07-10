@@ -74,10 +74,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = async (fields: SignUpFields) => {
+    const emailRedirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
     const { data, error } = await supabase.auth.signUp({
       email: fields.email,
       password: fields.password,
       options: {
+        emailRedirectTo,
         data: {
           full_name: fields.fullName,
           student_number: fields.studentNumber,
