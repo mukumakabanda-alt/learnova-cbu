@@ -21,7 +21,7 @@ type AuthContextValue = {
   profile: Profile | null;
   loading: boolean;
   isAdmin: boolean;
-  signUp: (fields: SignUpFields) => Promise<{ error: string | null }>;
+  signUp: (fields: SignUpFields) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -66,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = async (fields: SignUpFields) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email: fields.email,
       password: fields.password,
       options: {
@@ -79,7 +79,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
-    return { error: error?.message ?? null };
+    if (error) return { error: error.message, needsEmailConfirmation: false };
+    // If Supabase's project settings require email confirmation, signUp
+    // succeeds but returns NO session — the account exists but isn't signed
+    // in yet. Callers must check this before navigating anywhere that
+    // assumes a signed-in session (e.g. /dashboard).
+    return { error: null, needsEmailConfirmation: !data.session };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -118,4 +123,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-}
+    }
