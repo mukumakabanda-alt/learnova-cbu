@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useCatalog, useOpenRequests, useProgrammes, useCourses, useCreateCourse } from "@/lib/queries";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { useState } from "react";
-import { Users, GraduationCap, FileText, Inbox, Plus, CheckCircle2, ShieldCheck, Copy, Info } from "lucide-react";
+import { Users, GraduationCap, FileText, Inbox, Plus, CheckCircle2, ShieldCheck, KeyRound, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -210,8 +210,26 @@ function AdminAuthGate({
 }
 
 function AdminClaimGate({ userId }: { userId: string }) {
-  const sql = `update public.profiles set role = 'admin' where id = '${userId}';`;
-  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function claimAdmin() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const { data, error: claimError } = await supabase.rpc("claim_initial_admin");
+      if (claimError) throw claimError;
+      if (!data) throw new Error("An admin account already exists. Sign in with that admin account to manage Learnova.");
+      setMessage("Admin access created. Refreshing…");
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Admin setup failed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -222,20 +240,22 @@ function AdminClaimGate({ userId }: { userId: string }) {
         </div>
         <h1 className="mt-6 font-display text-3xl text-foreground">You're one step away.</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          You're signed in but this account isn't marked as admin yet. Run this one-liner in the Cloud database editor to promote yourself, then refresh.
+          You're signed in, but this account doesn't have admin access yet. If this is the first admin setup, claim it here.
         </p>
 
         <div className="mt-6 rounded-2xl border border-border bg-card p-4">
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
-            One-time bootstrap. After the first admin exists, you can promote others from the admin panel.
+            One-time bootstrap. Once an admin exists, this button locks itself and only admin accounts can manage the control room.
           </div>
-          <pre className="mt-3 overflow-x-auto rounded-xl bg-surface p-3 text-[11px] leading-relaxed text-foreground">{sql}</pre>
+          {error && <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-foreground">{error}</div>}
+          {message && <div className="mt-3 rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs text-foreground">{message}</div>}
           <button
-            onClick={() => { navigator.clipboard.writeText(sql); setCopied(true); setTimeout(() => setCopied(false), 1600); }}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+            onClick={claimAdmin}
+            disabled={busy || !userId}
+            className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft disabled:opacity-60"
           >
-            <Copy className="h-3.5 w-3.5" /> {copied ? "Copied" : "Copy SQL"}
+            <KeyRound className="h-4 w-4" /> {busy ? "Claiming access…" : "Claim first admin access"}
           </button>
         </div>
 
