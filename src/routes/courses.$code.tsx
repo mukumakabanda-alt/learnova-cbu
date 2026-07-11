@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
-import { useCourse, useMaterialsForCourse, useToggleSaved, useSavedMaterials } from "@/lib/queries";
+import { useCourse, useMaterialsForCourse, useToggleSaved, useSavedMaterials, useIncrementDownload } from "@/lib/queries";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Bookmark, Download, FileText } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { forceDownload } from "@/lib/document-files";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/courses/$code")({
   head: ({ params }) => ({
@@ -36,6 +37,7 @@ function CoursePage() {
   const { user } = useAuth();
   const { data: saved } = useSavedMaterials();
   const toggleSaved = useToggleSaved();
+  const incrementDownload = useIncrementDownload();
   const savedIds = new Set((saved ?? []).map((s) => s.material_id));
 
   // Tracks which specific bookmark buttons are mid-request, so a fast
@@ -74,11 +76,22 @@ function CoursePage() {
     );
   }
 
-  async function downloadMaterial(filePath: string | null) {
+  // Was its own separate, half-broken implementation — a 60-second signed
+  // URL, and window.open() called *after* an await, which mobile
+  // browsers routinely block as a popup (see the long comment in
+  // src/lib/document-files.ts). Now uses the same shared, working
+  // download path as the study page and document viewer, so it behaves
+  // identically everywhere: an hour-long signed URL, a real forced
+  // save-to-device download via a blob: URL, and a visible error instead
+  // of failing silently.
+  async function downloadMaterial(filePath: string | null, materialId: string, title: string) {
     if (!filePath) return;
-    const { data, error } = await supabase.storage.from("materials").createSignedUrl(filePath, 60);
-    if (error) return;
-    window.open(data.signedUrl, "_blank");
+    try {
+      await forceDownload(filePath, title);
+      incrementDownload.mutate(materialId);
+    } catch {
+      toast.error("Couldn't download that file right now — try again in a moment.");
+    }
   }
 
   return (
@@ -129,7 +142,7 @@ function CoursePage() {
                     <Bookmark className="h-4 w-4" />
                   </button>
                   {m.file_path && (
-                    <button onClick={() => downloadMaterial(m.file_path)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => downloadMaterial(m.file_path, m.id, m.title)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
                   )}
                 </div>
               );
@@ -171,4 +184,4 @@ function CoursePage() {
       <MobileTabBar />
     </div>
   );
-        }
+                                             }
