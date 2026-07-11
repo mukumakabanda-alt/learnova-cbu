@@ -79,6 +79,7 @@ function StudyHub() {
                         <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
                         <div className="truncate text-xs text-muted-foreground">
                           {m.courses?.code ?? "General"} · {statusLabel(m.status)}
+                          {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
                         </div>
                       </div>
                     </Link>
