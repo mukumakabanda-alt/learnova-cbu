@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
@@ -13,6 +13,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, getOfflineMaterial, useOnlineStatus } from "@/lib/offline";
 import { forceDownload } from "@/lib/document-files";
 import { DocumentViewer } from "@/components/DocumentViewer";
+import { LearnovaAI } from "@/lib/learnova-ai";
+import { loadStudentProfile, saveStudentProfile } from "@/lib/student-profile";
 import type { Database } from "@/integrations/supabase/types";
 import { Link } from "@tanstack/react-router";
 
@@ -67,8 +69,28 @@ export function StudyPanel({
   });
   const popularInCourse = useRelatedMaterials(material.course_code, { excludeId: material.id, limit: 4 });
 
-  const videoQuery = [material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title;
-  const recommendedVideos = useYoutubeRecommendations(material.status === "ready" ? videoQuery : null);
+  // A smarter, domain-aware search query — built by the local Learnova AI
+  // engine from the material's course, tags and type (see
+  // bestYoutubeQuery in src/lib/learnova-ai/youtube-suggester.ts) — feeds
+  // the same real YouTube Data API lookup the app already had
+  // (useYoutubeRecommendations → supabase/functions/youtube-recommendations),
+  // so what renders below is actual videos with real titles and
+  // thumbnails, not a link to a search results page. Falls back to the
+  // simpler course+tags string only if the AI engine has nothing better.
+  const videoQuery =
+    material.status === "ready"
+      ? LearnovaAI.bestYoutubeQuery({
+          id: material.id,
+          title: material.title,
+          summary: material.summary,
+          tags: material.tags,
+          content_year: material.content_year,
+          type: material.type,
+          course_code: material.course_code,
+          courseTitle: material.courses?.title,
+        }) ?? [material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title
+      : null;
+  const recommendedVideos = useYoutubeRecommendations(videoQuery);
 
   useEffect(() => {
     if (material.status === "ready") bumpStreak.mutate();
@@ -123,6 +145,10 @@ export function StudyPanel({
     try {
       await forceDownload(material.file_path, material.title);
       incrementDownload.mutate(material.id);
+      // Feeds the local Learnova AI student-memory system so "documents
+      // downloaded" on the dashboard is accurate — see
+      // src/lib/student-profile.ts.
+      if (user) saveStudentProfile(LearnovaAI.recordDownload(loadStudentProfile(user.id, user.email ?? "Student"), material.id));
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -158,6 +184,27 @@ export function StudyPanel({
       return;
     }
     toggleLike.mutate(material.id);
+  }
+
+  // Feeds every quiz attempt into the local Learnova AI student-memory
+  // system (src/lib/learnova-ai/student-memory.ts) — this is what powers
+  // "weak topics" / "strong topics" / quiz score on the dashboard. Stored
+  // on-device (localStorage, see src/lib/student-profile.ts) since
+  // there's no server-side table for it yet.
+  function handleQuizSubmitted(score: number, total: number, weakQuestions: string[], timeSpentSeconds: number) {
+    if (!user) return;
+    const profile = loadStudentProfile(user.id, user.email ?? "Student");
+    const updated = LearnovaAI.recordQuizAttempt(profile, {
+      materialId: material.id,
+      courseCode: material.course_code,
+      score,
+      total,
+      date: new Date().toISOString(),
+      topicsCovered: material.tags && material.tags.length ? material.tags : [material.type],
+      weakQuestions,
+      timeSpent: timeSpentSeconds,
+    });
+    saveStudentProfile(updated);
   }
 
   const isOutdated = material.content_year != null && CURRENT_YEAR - material.content_year >= 5;
@@ -284,7 +331,9 @@ export function StudyPanel({
                   </div>
                 )}
                 {tab === "flashcards" && <FlashcardDeck materialId={material.id} initialCards={offlineBundle?.flashcards} />}
-                {tab === "quiz" && <Quiz materialId={material.id} initialQuestions={offlineBundle?.quiz} />}
+                {tab === "quiz" && (
+                  <Quiz materialId={material.id} initialQuestions={offlineBundle?.quiz} onSubmit={handleQuizSubmitted} />
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -423,18 +472,38 @@ function FlashcardDeck({ materialId, initialCards }: { materialId: string; initi
   );
 }
 
-function Quiz({ materialId, initialQuestions }: { materialId: string; initialQuestions?: QuizRow[] }) {
+function Quiz({
+  materialId,
+  initialQuestions,
+  onSubmit,
+}: {
+  materialId: string;
+  initialQuestions?: QuizRow[];
+  /** Called once, right when "Check answers" is tapped — feeds the local Learnova AI student-memory system. */
+  onSubmit?: (score: number, total: number, weakQuestions: string[], timeSpentSeconds: number) => void;
+}) {
   const shouldFetch = !initialQuestions;
   const { data: fetchedQuestions, isLoading } = useQuizQuestions(shouldFetch ? materialId : "");
   const questions = initialQuestions ?? fetchedQuestions;
 
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
+  const startedAtRef = useRef(Date.now());
 
   if (shouldFetch && isLoading) return <SkeletonCard />;
   if (!questions?.length) return <EmptyState label="No quiz for this one yet." />;
 
   const score = questions.filter((q) => answers[q.id] === q.correct_index).length;
+
+  function handleCheckAnswers() {
+    setSubmitted(true);
+    onSubmit?.(
+      score,
+      questions!.length,
+      questions!.filter((q) => answers[q.id] !== q.correct_index).map((q) => q.question),
+      Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000)),
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -483,7 +552,7 @@ function Quiz({ materialId, initialQuestions }: { materialId: string; initialQue
       ))}
       {!submitted ? (
         <button
-          onClick={() => setSubmitted(true)}
+          onClick={handleCheckAnswers}
           disabled={Object.keys(answers).length < questions.length}
           className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground disabled:opacity-40"
         >
@@ -508,4 +577,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-    }
+}
