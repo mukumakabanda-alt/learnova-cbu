@@ -221,6 +221,13 @@ export type Database = {
             referencedRelation: "courses"
             referencedColumns: ["code"]
           },
+          {
+            foreignKeyName: "materials_uploaded_by_profile_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pipeline_invocations: {
