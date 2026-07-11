@@ -23,7 +23,7 @@ type AuthContextValue = {
   roles: AppRole[];
   loading: boolean;
   isAdmin: boolean;
-  signUp: (fields: SignUpFields) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
+  signUp: (fields: SignUpFields) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -57,7 +57,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event: string, newSession: any) => {
-
       setSession(newSession);
       if (newSession?.user) {
         loadProfile(newSession.user.id);
@@ -73,13 +72,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Quick, no-email-step sign-up: student number + password, in under a
+  // minute. This only ever returns an error string — there is no
+  // "needsEmailConfirmation" branch for callers to handle, by design.
+  //
+  // The actual email-confirmation requirement lives on the Supabase Auth
+  // project itself (Lovable Cloud → Backend → Authentication → Email →
+  // "Confirm email" toggle), not in this code. If that toggle is still on,
+  // supabase.auth.signUp() below won't return a session — in that one case
+  // we try an immediate sign-in as a fallback, and if THAT also fails
+  // (because the account is genuinely unconfirmed) we surface a clear,
+  // actionable message instead of pretending everything's fine.
   const signUp = async (fields: SignUpFields) => {
-    const emailRedirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
     const { data, error } = await supabase.auth.signUp({
       email: fields.email,
       password: fields.password,
       options: {
-        emailRedirectTo,
         data: {
           full_name: fields.fullName,
           student_number: fields.studentNumber,
@@ -89,12 +97,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
-    if (error) return { error: error.message, needsEmailConfirmation: false };
-    // If Supabase's project settings require email confirmation, signUp
-    // succeeds but returns NO session — the account exists but isn't signed
-    // in yet. Callers must check this before navigating anywhere that
-    // assumes a signed-in session (e.g. /dashboard).
-    return { error: null, needsEmailConfirmation: !data.session };
+    if (error) return { error: error.message };
+    if (data.session) return { error: null };
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: fields.email,
+      password: fields.password,
+    });
+    if (signInError) {
+      return {
+        error:
+          "Your account was created, but this project still has \"Confirm email\" switched on in Supabase Auth settings, so sign-in is blocked until that's turned off. Go to Lovable Cloud → Backend → Authentication → Email, disable \"Confirm email\", then sign in again.",
+      };
+    }
+    return { error: null };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -134,4 +150,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-    }
+  }
