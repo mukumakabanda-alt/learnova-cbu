@@ -3,7 +3,7 @@ import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { SearchBar } from "@/components/SearchBar";
 import { CourseCard } from "@/components/CourseCard";
 import { HeroImageStrip } from "@/components/HeroCarousel";
-import { useProgrammes, useCourses } from "@/lib/queries";
+import { useProgrammes, usePopularCourses, usePopularMaterials } from "@/lib/queries";
 import { ArrowRight, Compass, BookOpen, Zap } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -24,7 +24,22 @@ export const Route = createFileRoute("/")({
 // tilt gimmick, no "why us" wall of text — those live elsewhere.
 function Home() {
   const { data: programmes } = useProgrammes();
-  const { data: courses } = useCourses();
+  // Both of these only ever reflect genuine engagement (real likes and
+  // downloads) — see usePopularCourses/usePopularMaterials in queries.ts.
+  // Neither pads its result out with recent-but-unproven material, so an
+  // empty array here is a completely normal state for a young catalogue,
+  // not a bug — and every section below hides itself completely rather
+  // than showing something fake when that happens.
+  const { data: popularCourses } = usePopularCourses(6);
+  const { data: popularMaterials } = usePopularMaterials(8);
+
+  // De-duplicated course codes (falling back to the material's own title
+  // for anything with no course tag) from whatever's actually trending —
+  // replaces the old hardcoded "CS 210 / Power Systems / IFRS" chips, none
+  // of which were ever backed by a real document anyone had opened.
+  const trendingChips = Array.from(
+    new Set((popularMaterials ?? []).map((m) => m.courses?.code || m.title).filter(Boolean)),
+  ).slice(0, 4);
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -45,39 +60,43 @@ function Home() {
 
         <div className="mx-auto mt-10 max-w-xl">
           <SearchBar />
-          <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs">
-            <span className="text-muted-foreground">Try</span>
-            {["CS 210", "Power Systems", "IFRS"].map((t) => (
-              <Link
-                key={t}
-                to="/search"
-                search={{ q: t }}
-                className="rounded-full border border-border bg-surface px-3 py-1 font-medium text-foreground/85 transition-colors hover:border-primary/40 hover:text-foreground"
-              >
-                {t}
-              </Link>
-            ))}
-          </div>
+          {trendingChips.length > 0 && (
+            <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs">
+              <span className="text-muted-foreground">Trending</span>
+              {trendingChips.map((t) => (
+                <Link
+                  key={t}
+                  to="/search"
+                  search={{ q: t }}
+                  className="rounded-full border border-border bg-surface px-3 py-1 font-medium text-foreground/85 transition-colors hover:border-primary/40 hover:text-foreground"
+                >
+                  {t}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
-      {/* 3. TOP PICKS */}
-      <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-28">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">Top picks</div>
-            <h2 className="mt-2 font-display text-3xl leading-tight text-foreground sm:text-4xl">
-              Popular courses right now
-            </h2>
+      {/* 3. TOP PICKS — only appears once something has real engagement (likes/downloads); no placeholder content */}
+      {(popularCourses?.length ?? 0) > 0 && (
+        <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-28">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">Top picks</div>
+              <h2 className="mt-2 font-display text-3xl leading-tight text-foreground sm:text-4xl">
+                Popular courses right now
+              </h2>
+            </div>
+            <Link to="/browse" className="hidden shrink-0 items-center gap-1.5 text-sm font-semibold text-copper hover:underline sm:inline-flex">
+              Browse all <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
-          <Link to="/browse" className="hidden shrink-0 items-center gap-1.5 text-sm font-semibold text-copper hover:underline sm:inline-flex">
-            Browse all <ArrowRight className="h-4 w-4" />
-          </Link>
-        </div>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {(courses ?? []).slice(0, 6).map((c) => (<CourseCard key={c.code} course={c} />))}
-        </div>
-      </section>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {popularCourses!.map((c) => (<CourseCard key={c.code} course={c} />))}
+          </div>
+        </section>
+      )}
 
       {/* 4. BROWSE BY PROGRAMME — minimal chip strip */}
       <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-28">
