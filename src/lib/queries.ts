@@ -122,7 +122,7 @@ export function useCatalog(search?: string) {
     queryFn: async (): Promise<MaterialWithCourse[]> => {
       let q = supabase
         .from("materials")
-        .select("*, courses(title, code)")
+        .select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
       if (search?.trim()) q = q.ilike("title", `%${search}%`);
