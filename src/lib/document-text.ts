@@ -386,3 +386,60 @@ export function fileKindLabel(file: File): string {
   };
   return map[ext] ?? "Document";
 }
+
+const MATERIAL_TYPE_VALUES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
+export type GuessableMaterialType = (typeof MATERIAL_TYPE_VALUES)[number];
+
+// Keyword → type, checked in order (first match wins). Applied to both the
+// filename and (once available) the first slice of extracted text, so a
+// file named "notes.pdf" whose first page reads "FINAL EXAMINATION —
+// MAY 2023" still gets correctly caught as a past paper. Deliberately
+// simple and explainable rather than a model call: the whole point is an
+// instant, free, on-device first guess the person can immediately see and
+// override with one tap — not a perfect classifier.
+const TYPE_KEYWORDS: { type: GuessableMaterialType; patterns: RegExp[] }[] = [
+  {
+    type: "Past Paper",
+    patterns: [
+      /past[\s_-]?paper/i, /\bexam(ination)?\b/i, /\btest\b/i, /\bquiz\b/i,
+      /\bmid[\s_-]?semester\b/i, /\bfinal[\s_-]?(exam|paper)?\b/i, /\bmemo(randum)?\b/i,
+      /\b(19|20)\d{2}\b.*\b(exam|paper|test)\b/i,
+    ],
+  },
+  {
+    type: "Slides",
+    patterns: [/\bslides?\b/i, /\blecture[\s_-]?\d*\b/i, /\bppt\b/i, /\bpresentation\b/i, /\bdeck\b/i],
+  },
+  {
+    type: "Assignment",
+    patterns: [/\bassignment\b/i, /\btutorial\b/i, /\bhomework\b/i, /\bproblem[\s_-]?set\b/i, /\bcoursework\b/i, /\blab[\s_-]?report\b/i],
+  },
+  {
+    type: "Outline",
+    patterns: [/\boutline\b/i, /\bsyllabus\b/i, /\bcourse[\s_-]?guide\b/i, /\bstudy[\s_-]?guide\b/i],
+  },
+  {
+    type: "Summary",
+    patterns: [/\bsummary\b/i, /\brevision\b/i, /\bcheat[\s_-]?sheet\b/i, /\bcondensed\b/i, /\bkey[\s_-]?points\b/i],
+  },
+];
+
+/**
+ * Best-effort first guess at a material's category, from its filename and
+ * (optionally) a short slice of its extracted text — never throws, never
+ * returns anything outside the six real categories, and defaults to
+ * "Notes" when nothing matches (the safest, most common default; this is
+ * a starting point the uploader can change with one tap, not a final answer).
+ */
+export function guessMaterialType(filename: string, textSample?: string): GuessableMaterialType {
+  const extensionHint = extOf(filename);
+  if (["ppt", "pptx"].includes(extensionHint)) return "Slides";
+
+  // Filename first — the strongest, cheapest signal, and available
+  // instantly (before OCR/extraction even starts).
+  const haystacks = [filename, textSample ? textSample.slice(0, 1500) : ""];
+  for (const { type, patterns } of TYPE_KEYWORDS) {
+    if (haystacks.some((h) => h && patterns.some((p) => p.test(h)))) return type;
+  }
+  return "Notes";
+}
