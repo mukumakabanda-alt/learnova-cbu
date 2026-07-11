@@ -3,10 +3,12 @@ import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useAuth } from "@/hooks/use-auth";
 import { useSavedMaterials, useUpdateProfile, useProgrammes } from "@/lib/queries";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
-import { Flame, Bookmark, ArrowRight, FileText, Trophy, Target, Pencil, Check, X } from "lucide-react";
-import { useState } from "react";
+import { Flame, Bookmark, ArrowRight, FileText, Trophy, Target, Pencil, Check, X, Download, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
+import { loadStudentProfile } from "@/lib/student-profile";
+import type { StudentProfile } from "@/lib/learnova-ai/types";
 
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
@@ -18,6 +20,15 @@ export const Route = createFileRoute("/dashboard")({
 function Dashboard() {
   const { user, profile, loading } = useAuth();
   const { data: saved } = useSavedMaterials();
+
+  // The Learnova AI engine's student-memory profile — weak/strong topics,
+  // quiz history, download history — lives in localStorage on this
+  // device (see src/lib/student-profile.ts), so it's read once here
+  // rather than through react-query.
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  useEffect(() => {
+    if (user) setStudentProfile(loadStudentProfile(user.id, profile?.full_name || user.email || "Student"));
+  }, [user, profile?.full_name]);
 
   if (loading) return <div className="min-h-screen bg-background" />;
 
@@ -46,7 +57,17 @@ function Dashboard() {
   }
 
   const streak = profile.current_streak ?? 0;
-  const best = profile.longest_streak ?? 0;
+
+  const downloadedCount = new Set(studentProfile?.downloadHistory ?? []).size;
+  const quizAttempts = studentProfile?.quizHistory.length ?? 0;
+  const avgScorePct =
+    quizAttempts > 0
+      ? Math.round(
+          (studentProfile!.quizHistory.reduce((sum, q) => sum + (q.total > 0 ? q.score / q.total : 0), 0) / quizAttempts) * 100,
+        )
+      : null;
+  const weakTopics = studentProfile?.weakTopics ?? [];
+  const strongTopics = studentProfile?.strongTopics ?? [];
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -63,39 +84,60 @@ function Dashboard() {
 
           <div className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatTile icon={Flame} label="Day streak" value={streak} accent="copper" />
-            <StatTile icon={Trophy} label="Best streak" value={best} accent="gold" />
             <StatTile icon={Bookmark} label="Saved" value={saved?.length ?? 0} accent="copper" />
-            <StatTile icon={Target} label="This week" value={`${Math.min(streak, 7)}/7`} accent="gold" />
-          </div>
-
-          {/* 7-day streak ribbon — gamified without being childish */}
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-white">This week</span>
-              <span className="text-white/60">Keep the copper seam glowing</span>
-            </div>
-            <div className="mt-4 flex gap-1.5">
-              {Array.from({ length: 7 }).map((_, i) => {
-                const filled = i < Math.min(streak, 7);
-                return (
-                  <div
-                    key={i}
-                    className={`h-8 flex-1 rounded-md transition-all ${
-                      filled
-                        ? "bg-gradient-to-t from-copper to-gold shadow-[0_0_16px_oklch(0.7_0.16_48_/_0.5)]"
-                        : "bg-white/[0.06]"
-                    }`}
-                  />
-                );
-              })}
-            </div>
+            <StatTile icon={Download} label="Downloaded" value={downloadedCount} accent="gold" />
+            <StatTile icon={Trophy} label="Quiz score" value={avgScorePct !== null ? `${avgScorePct}%` : "—"} accent="gold" />
           </div>
         </div>
       </section>
 
       <div className="mx-auto grid max-w-6xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1fr_320px]">
         <section>
-          <h2 className="font-display text-2xl text-foreground">Saved materials</h2>
+          <h2 className="font-display text-2xl text-foreground">Your topics</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Built from quizzes you've taken, on this device.</p>
+          {weakTopics.length === 0 && strongTopics.length === 0 ? (
+            <div className="mt-5 rounded-2xl border border-dashed border-border bg-surface-muted p-10 text-center">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-surface text-copper">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <p className="mx-auto mt-4 max-w-xs text-sm text-muted-foreground">
+                Take a quiz on any material and this fills in with what to focus on, and what you've already got down.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-copper">
+                  <Target className="h-3.5 w-3.5" /> Focus on
+                </div>
+                {weakTopics.length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">Nothing flagged yet — keep going.</p>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {weakTopics.map((t) => (
+                      <span key={t} className="rounded-md bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-copper">
+                  <Sparkles className="h-3.5 w-3.5" /> Strong in
+                </div>
+                {strongTopics.length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">Nothing mastered yet — keep going.</p>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {strongTopics.map((t) => (
+                      <span key={t} className="rounded-md bg-teal/10 px-2 py-1 text-xs font-medium text-teal">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <h2 className="mt-10 font-display text-2xl text-foreground">Saved materials</h2>
           {!saved?.length ? (
             <div className="mt-5 rounded-2xl border border-dashed border-border bg-surface-muted p-10 text-center">
               <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-surface text-copper">
@@ -298,4 +340,4 @@ function ProfileEditCard({ profile }: { profile: ProfileRow }) {
       </div>
     </div>
   );
-      }
+  }
