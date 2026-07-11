@@ -11,11 +11,12 @@ import cbuGateNight from "@/assets/cbu-gate-night.jpg.asset.json";
 import cbuCourtyard from "@/assets/cbu-courtyard.jpg.asset.json";
 import cbuMainBuilding from "@/assets/cbu-main-building.jpg.asset.json";
 import cbuPalm from "@/assets/cbu-palm.jpg.asset.json";
+import { useHeroSlides } from "@/lib/queries";
 
-const SLIDES = [
+const DEFAULT_SLIDES = [
   cbuGateDay, campusQuad, cbuLawn, cbuSunset, campusBuildings, cbuCourtyard,
   cbuMainBuilding, campusGate, cbuPalm, campusGarden, cbuGateNight, graduation,
-];
+].map((s) => s.url);
 
 const INTERVAL_MS = 4200;
 
@@ -29,15 +30,33 @@ const INTERVAL_MS = 4200;
 // (via a throwaway Image() object, no DOM node) a moment before it's shown,
 // and the whole rotation — so all future network requests — pauses
 // entirely while the strip is scrolled off-screen.
+//
+// Source of the photos: admin-managed via the "Carousel" tab in /admin
+// (hero_slides table + 'hero-images' storage bucket). If the admin hasn't
+// added any yet, this falls back to the original bundled campus photos so
+// the homepage never looks broken on a fresh install.
 export function HeroImageStrip() {
+  const { data: adminSlides } = useHeroSlides();
+  const slides = adminSlides && adminSlides.length > 0 ? adminSlides.map((s) => s.url) : DEFAULT_SLIDES;
+
   const [layerSrcs, setLayerSrcs] = useState<[string, string]>([
-    SLIDES[0].url,
-    SLIDES[1 % SLIDES.length].url,
+    slides[0],
+    slides[1 % slides.length],
   ]);
   const [activeLayer, setActiveLayer] = useState<0 | 1>(0);
   const [slideIndex, setSlideIndex] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // If the slide set changes (admin photos finish loading in, or someone
+  // adds/removes one), restart from the first slide of the new set rather
+  // than showing a stale index from the old array.
+  useEffect(() => {
+    setLayerSrcs([slides[0], slides[1 % slides.length]]);
+    setActiveLayer(0);
+    setSlideIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slides.join("|")]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -51,12 +70,12 @@ export function HeroImageStrip() {
   }, []);
 
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isVisible || slides.length < 2) return;
     let cancelled = false;
 
     const id = setInterval(() => {
-      const nextIndex = (slideIndex + 1) % SLIDES.length;
-      const nextUrl = SLIDES[nextIndex].url;
+      const nextIndex = (slideIndex + 1) % slides.length;
+      const nextUrl = slides[nextIndex];
       const preload = new Image();
       preload.onload = () => {
         if (cancelled) return;
@@ -75,7 +94,7 @@ export function HeroImageStrip() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [isVisible, slideIndex, activeLayer]);
+  }, [isVisible, slideIndex, activeLayer, slides]);
 
   return (
     <div ref={containerRef} className="w-full bg-surface px-4 py-5 sm:py-6 lg:py-7">
@@ -92,7 +111,7 @@ export function HeroImageStrip() {
         ))}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
         <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
-          {SLIDES.map((_, i) => (
+          {slides.map((_, i) => (
             <span
               key={i}
               className={`h-1.5 rounded-full transition-all duration-500 ${
@@ -104,4 +123,4 @@ export function HeroImageStrip() {
       </figure>
     </div>
   );
-  }
+      }
