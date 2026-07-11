@@ -139,6 +139,7 @@ export type Database = {
       }
       materials: {
         Row: {
+          content_year: number | null
           course_code: string | null
           created_at: string
           download_count: number
@@ -155,6 +156,7 @@ export type Database = {
           uploaded_by: string | null
         }
         Insert: {
+          content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
@@ -171,6 +173,7 @@ export type Database = {
           uploaded_by?: string | null
         }
         Update: {
+          content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
