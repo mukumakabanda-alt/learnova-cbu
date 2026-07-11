@@ -1,9 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useAuth } from "@/hooks/use-auth";
-import { useSavedMaterials } from "@/lib/queries";
+import { useSavedMaterials, useUpdateProfile, useProgrammes } from "@/lib/queries";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
-import { Flame, Bookmark, ArrowRight, FileText, Trophy, Target } from "lucide-react";
+import { Flame, Bookmark, ArrowRight, FileText, Trophy, Target, Pencil, Check, X } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import type { Database } from "@/integrations/supabase/types";
+
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Your dashboard — Learnova" }] }),
@@ -119,6 +124,11 @@ function Dashboard() {
 
         <aside className="space-y-4">
           <div className="rounded-2xl border border-border bg-card p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">Your profile</div>
+            <div className="mt-4"><ProfileEditCard profile={profile} /></div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-copper">Request material</div>
             <p className="mt-2 text-sm text-muted-foreground">Can't find what you need? Ask and we'll notify you.</p>
             <div className="mt-4"><RequestMaterialForm /></div>
@@ -151,3 +161,141 @@ function StatTile({
     </div>
   );
 }
+
+// The "users update own profile" RLS policy has always allowed this — this
+// card is what was actually missing: students previously had no way to
+// fix a typo in their name, correct their programme/year after a
+// transfer, or add a phone number once signed up.
+function ProfileEditCard({ profile }: { profile: ProfileRow }) {
+  const { data: programmes } = useProgrammes();
+  const updateProfile = useUpdateProfile();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    fullName: profile.full_name,
+    studentNumber: profile.student_number ?? "",
+    school: profile.school,
+    programmeCode: profile.programme_code,
+    year: profile.year,
+    semester: profile.semester as 1 | 2,
+    phone: profile.phone ?? "",
+  });
+
+  function startEdit() {
+    setForm({
+      fullName: profile.full_name,
+      studentNumber: profile.student_number ?? "",
+      school: profile.school,
+      programmeCode: profile.programme_code,
+      year: profile.year,
+      semester: profile.semester as 1 | 2,
+      phone: profile.phone ?? "",
+    });
+    setEditing(true);
+  }
+
+  function save() {
+    updateProfile.mutate(
+      {
+        fullName: form.fullName.trim(),
+        studentNumber: form.studentNumber.trim() || null,
+        school: form.school.trim(),
+        programmeCode: form.programmeCode,
+        year: form.year,
+        semester: form.semester,
+        phone: form.phone.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          toast.success("Profile updated.");
+        },
+        onError: () => toast.error("Couldn't save that — try again in a moment."),
+      },
+    );
+  }
+
+  if (!editing) {
+    return (
+      <div>
+        <div className="text-sm font-semibold text-foreground">{profile.full_name || "Unnamed"}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {profile.student_number || "No student number"} · {profile.school}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {profile.programme_code || "No programme"} · Year {profile.year}, Sem {profile.semester}
+        </div>
+        <div className="text-xs text-muted-foreground">{profile.phone || "No phone number"}</div>
+        <button
+          onClick={startEdit}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted"
+        >
+          <Pencil className="h-3.5 w-3.5" /> Edit profile
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <input
+        value={form.fullName}
+        onChange={(e) => setForm({ ...form, fullName: e.target.value })}
+        placeholder="Full name"
+        className="w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+      />
+      <input
+        value={form.studentNumber}
+        onChange={(e) => setForm({ ...form, studentNumber: e.target.value })}
+        placeholder="Student number"
+        className="w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+      />
+      <input
+        value={form.school}
+        onChange={(e) => setForm({ ...form, school: e.target.value })}
+        placeholder="School"
+        className="w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+      />
+      <select
+        value={form.programmeCode}
+        onChange={(e) => setForm({ ...form, programmeCode: e.target.value })}
+        className="w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+      >
+        {(programmes ?? []).map((p) => (<option key={p.code} value={p.code}>{p.name}</option>))}
+      </select>
+      <div className="flex gap-2">
+        <select
+          value={form.year}
+          onChange={(e) => setForm({ ...form, year: Number(e.target.value) })}
+          className="w-1/2 rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+        >
+          {[1, 2, 3, 4, 5].map((y) => (<option key={y} value={y}>Year {y}</option>))}
+        </select>
+        <select
+          value={form.semester}
+          onChange={(e) => setForm({ ...form, semester: Number(e.target.value) as 1 | 2 })}
+          className="w-1/2 rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+        >
+          <option value={1}>Semester 1</option><option value={2}>Semester 2</option>
+        </select>
+      </div>
+      <input
+        value={form.phone}
+        onChange={(e) => setForm({ ...form, phone: e.target.value })}
+        placeholder="Phone (optional)"
+        className="w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={updateProfile.isPending}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          <Check className="h-3.5 w-3.5" /> Save
+        </button>
+        <button onClick={() => setEditing(false)} className="inline-flex items-center gap-1.5 rounded-lg bg-surface-muted px-3 py-1.5 text-xs font-semibold text-foreground">
+          <X className="h-3.5 w-3.5" /> Cancel
+        </button>
+      </div>
+    </div>
+  );
+      }
