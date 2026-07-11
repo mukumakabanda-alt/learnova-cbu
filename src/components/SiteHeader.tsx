@@ -1,13 +1,13 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { BookOpen, LayoutDashboard, Search, Compass, ShieldCheck, User } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import learnovaLogo from "@/assets/learnova-logo.png.asset.json";
 
 export function Logo({ className = "" }: { className?: string }) {
   return (
     <Link to="/" className={`flex items-center gap-2 ${className}`}>
-      <span className="relative grid h-9 w-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-soft">
-        <span className="font-display text-xl leading-none">L</span>
-        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-gold-gradient ring-2 ring-background" />
+      <span className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-background shadow-soft ring-1 ring-border">
+        <img src={learnovaLogo.url} alt="Learnova" className="h-full w-full object-cover" />
       </span>
       <span className="font-display text-2xl leading-none tracking-tight text-foreground">
         Learn<span className="text-gradient-gold">ova</span>

@@ -102,18 +102,21 @@ export type Database = {
           id: string
           image_path: string
           position: number
+          updated_at: string
         }
         Insert: {
           created_at?: string
           id?: string
           image_path: string
           position?: number
+          updated_at?: string
         }
         Update: {
           created_at?: string
           id?: string
           image_path?: string
           position?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -217,6 +220,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "courses"
             referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "materials_uploaded_by_profile_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -435,6 +445,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_download_count: {
+        Args: { p_material_id: string }
+        Returns: undefined
       }
       is_admin: { Args: { _user_id?: string }; Returns: boolean }
       promote_user_to_admin: { Args: { p_user_id: string }; Returns: undefined }

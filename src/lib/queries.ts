@@ -15,7 +15,10 @@ type UserRoleRow = Database["public"]["Tables"]["user_roles"]["Row"];
 type HeroSlideRow = Database["public"]["Tables"]["hero_slides"]["Row"];
 
 export type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
-export type MaterialWithCourse = MaterialRow & { courses: { title: string; code: string } | null };
+export type MaterialWithCourse = MaterialRow & {
+  courses: { title: string; code: string } | null;
+  uploader?: { full_name: string } | null;
+};
 type RequestWithCourse = RequestRow & { courses: { title: string } | null };
 type SavedWithMaterial = SavedRow & { materials: MaterialWithCourse | null };
 export type HeroSlide = HeroSlideRow & { url: string };
@@ -119,7 +122,7 @@ export function useCatalog(search?: string) {
     queryFn: async (): Promise<MaterialWithCourse[]> => {
       let q = supabase
         .from("materials")
-        .select("*, courses(title, code)")
+        .select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
       if (search?.trim()) q = q.ilike("title", `%${search}%`);
@@ -134,7 +137,7 @@ export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).maybeSingle();
+      const { data, error } = await supabase.from("materials").select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)").eq("id", id).maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },
