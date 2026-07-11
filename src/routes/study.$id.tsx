@@ -18,12 +18,24 @@ function StudyDocument() {
   const [offline, setOffline] = useState<OfflineBundle | null>(null);
   const [checkedOffline, setCheckedOffline] = useState(false);
 
-  // Only bother checking IndexedDB once the network attempt has actually
-  // failed (or we already know we're offline) — most visits never need this.
-  const shouldCheckOffline = !isLoading && !material && (isError || !isOnline);
+  // Check IndexedDB the moment we know we're offline, rather than waiting
+  // for the network query to fail first. This matters because React Query
+  // (by default) doesn't actually attempt a fetch while the browser is
+  // offline — it just sits "paused" with isLoading stuck true and isError
+  // never firing. The old check here (`!isLoading && ... (isError ||
+  // !isOnline)`) required isLoading to turn false first, which meant it
+  // would wait forever and the offline fallback would never show up —
+  // exactly what "offline mode doesn't work" looks like. isOnline comes
+  // from the browser's online/offline events, so it's known immediately,
+  // independent of that stuck network query.
+  const shouldCheckOffline = !material && (isError || !isOnline);
 
   useEffect(() => {
-    if (!shouldCheckOffline) return;
+    if (!shouldCheckOffline) {
+      setOffline(null);
+      setCheckedOffline(false);
+      return;
+    }
     let active = true;
     getOfflineMaterial(id).then((bundle) => {
       if (active) {
@@ -38,7 +50,10 @@ function StudyDocument() {
 
   const effectiveMaterial = material ?? offline?.material ?? null;
   const isOfflineCopy = !material && !!offline;
-  const stillResolving = isLoading || (shouldCheckOffline && !checkedOffline);
+  // While we need to check offline storage, resolve as soon as that check
+  // finishes — don't keep waiting on `isLoading`, since it can legitimately
+  // stay true indefinitely for a paused, offline network query.
+  const stillResolving = shouldCheckOffline ? !checkedOffline : isLoading;
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -85,4 +100,4 @@ function StudyDocument() {
       <MobileTabBar />
     </div>
   );
-    }
+}
