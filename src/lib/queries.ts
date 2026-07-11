@@ -15,7 +15,10 @@ type UserRoleRow = Database["public"]["Tables"]["user_roles"]["Row"];
 type HeroSlideRow = Database["public"]["Tables"]["hero_slides"]["Row"];
 
 export type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
-export type MaterialWithCourse = MaterialRow & { courses: { title: string; code: string } | null };
+export type MaterialWithCourse = MaterialRow & {
+  courses: { title: string; code: string } | null;
+  uploader?: { full_name: string } | null;
+};
 type RequestWithCourse = RequestRow & { courses: { title: string } | null };
 type SavedWithMaterial = SavedRow & { materials: MaterialWithCourse | null };
 export type HeroSlide = HeroSlideRow & { url: string };
