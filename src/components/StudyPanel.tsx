@@ -9,9 +9,10 @@ import {
   useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload,
   useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike, type MaterialWithCourse,
 } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, getOfflineMaterial, useOnlineStatus } from "@/lib/offline";
+import { forceDownload } from "@/lib/document-files";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import type { Database } from "@/integrations/supabase/types";
 import { Link } from "@tanstack/react-router";
 
@@ -28,17 +29,6 @@ const TABS = [
 type Tab = (typeof TABS)[number]["id"];
 
 const CURRENT_YEAR = new Date().getFullYear();
-
-// Uploads are stored at `${userId}/${crypto.randomUUID()}-${originalName}`.
-// A v4 UUID is always exactly 36 characters, so everything after that
-// (plus the separating hyphen) is the real original filename — used so a
-// forced download saves as "Macro Notes Week 3.pdf" instead of a bare
-// UUID with no extension a person can't recognise in their Downloads folder.
-function originalFileName(filePath: string, fallbackTitle: string): string {
-  const base = filePath.split("/").pop() ?? "";
-  const name = base.length > 37 ? base.slice(37) : base;
-  return name || fallbackTitle;
-}
 
 const pillBtn =
   "inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:cursor-default disabled:opacity-50";
@@ -62,6 +52,7 @@ export function StudyPanel({
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   // These share a react-query cache key with the ones FlashcardDeck/Quiz
   // use, so this doesn't cause an extra network round trip — it just lets
@@ -111,52 +102,29 @@ export function StudyPanel({
     }
   }
 
-  // Opens the file in a new tab for reading online. The blank tab is
-  // opened synchronously, before the `await` below — that's not
-  // decorative. Mobile Safari and Chrome only allow `window.open` to
-  // succeed when it happens directly inside a click handler; the instant
-  // an `await` runs first, the browser no longer considers the window
-  // "directly requested" and silently blocks it. That silent block (no
-  // error, nothing visibly happens) is exactly what "I can't view it,
-  // nothing happens" looks like from the outside.
-  async function handleView() {
-    if (!material.file_path) return;
-    const win = window.open("", "_blank");
-    const { data, error } = await supabase.storage.from("materials").createSignedUrl(material.file_path, 60);
-    if (error || !data) {
-      win?.close();
-      toast.error("Couldn't open that file right now — try again in a moment.");
-      return;
-    }
-    incrementDownload.mutate(material.id);
-    if (win) win.location.href = data.signedUrl;
-    else window.location.href = data.signedUrl; // popup was blocked anyway — fall back to navigating this tab
+  // Opens the in-website document viewer (see DocumentViewer) instead of
+  // trying to open a new browser tab. That old approach was the actual
+  // cause of "I tap View and nothing happens": it opened a blank tab
+  // *before* an `await`, but for a non-PDF file the browser then just
+  // tried to download the raw file into that blank tab with no visible
+  // change — indistinguishable from doing nothing at all. This shows the
+  // document right on the page instead, with Save/Download next to it.
+  function handleView() {
+    setViewerOpen(true);
   }
 
   // Forces an actual save-to-device download (rather than an inline
-  // preview) by asking Storage for a signed URL with Content-Disposition
-  // set to attachment, restoring the real original filename + extension.
-  // A plain link click (not window.open) triggers this with no popup
-  // blocker involved, since nothing opens a new window or tab.
+  // preview) via the shared forceDownload helper — same signed-URL +
+  // Content-Disposition:attachment approach the DocumentViewer's own
+  // Download button uses, so both behave identically.
   async function handleDownload() {
     if (!material.file_path) return;
     setDownloading(true);
     try {
-      const filename = originalFileName(material.file_path, material.title);
-      const { data, error } = await supabase.storage
-        .from("materials")
-        .createSignedUrl(material.file_path, 60, { download: filename });
-      if (error || !data) {
-        toast.error("Couldn't download that file right now — try again in a moment.");
-        return;
-      }
+      await forceDownload(material.file_path, material.title);
       incrementDownload.mutate(material.id);
-      const link = document.createElement("a");
-      link.href = data.signedUrl;
-      link.rel = "noopener";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+    } catch {
+      toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
       setDownloading(false);
     }
@@ -193,48 +161,18 @@ export function StudyPanel({
   }
 
   const isOutdated = material.content_year != null && CURRENT_YEAR - material.content_year >= 5;
-
-  if (material.status === "processing") {
-    return (
-      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-10 text-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        <div className="text-sm font-semibold text-foreground">Still generating study tools…</div>
-        <p className="max-w-xs text-xs text-muted-foreground">This page updates itself the moment it's ready — no need to refresh.</p>
-      </div>
-    );
-  }
-
-  if (material.status === "failed") {
-    return (
-      <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6 text-sm text-foreground">
-        <p>
-          {material.processing_error
-            ? "Generation didn't finish for this one. Here's why:"
-            : "Generation didn't finish for this one. Try re-uploading it, or request it and an admin will take a look."}
-        </p>
-        {material.processing_error && (
-          <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface px-3 py-2 font-mono text-xs text-destructive">
-            {material.processing_error}
-          </p>
-        )}
-        <p className="mt-2 text-xs text-muted-foreground">The file itself is safe either way — view or download it below.</p>
-        {material.file_path && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button onClick={handleView} className={pillBtn}>
-              <Eye className="h-3.5 w-3.5" /> View
-            </button>
-            <button onClick={handleDownload} disabled={downloading} className={pillBtn}>
-              {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Download
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
+  const isProcessing = material.status === "processing";
+  const isFailed = material.status === "failed";
 
   return (
     <div>
-      {/* Utility row: view, download, share, like, offline, outdated flag — quiet by default, only shows what applies */}
+      {/* Utility row: view, download, share, like, offline, outdated flag —
+          quiet by default, only shows what applies. Shown regardless of
+          processing status: the raw file is already safely uploaded and
+          viewable/downloadable even while AI-generated study tools are
+          still being produced (or failed outright) — a document being
+          "still generating" used to hide these buttons entirely, which is
+          exactly what made a freshly-uploaded file look broken. */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {material.file_path && (
           <>
@@ -279,84 +217,118 @@ export function StudyPanel({
         )}
       </div>
 
-      <div className="relative flex gap-1 rounded-xl border border-border bg-surface-muted p-1">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-colors"
-          >
-            {tab === t.id && (
-              <motion.span
-                layoutId="study-tab-pill"
-                className="absolute inset-0 rounded-lg bg-primary"
-                transition={{ type: "spring", stiffness: 500, damping: 35 }}
-              />
-            )}
-            <span className={`relative z-10 flex items-center gap-1.5 ${tab === t.id ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              <t.icon className="h-3.5 w-3.5" /> {t.label}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-5 min-h-[160px]">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={tab}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-          >
-            {tab === "summary" && (
-              <div className="rounded-2xl border border-border bg-card p-5 text-sm leading-relaxed text-foreground">
-                {material.summary || "No summary yet."}
-                {material.tags && material.tags.length > 0 && (
-                  <div className="mt-4 flex flex-wrap gap-1.5">
-                    {material.tags.map((tag) => (
-                      <span key={tag} className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">{tag}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {tab === "flashcards" && <FlashcardDeck materialId={material.id} initialCards={offlineBundle?.flashcards} />}
-            {tab === "quiz" && <Quiz materialId={material.id} initialQuestions={offlineBundle?.quiz} />}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      {material.type === "Past Paper" && (relatedPastPapers.data?.length ?? 0) > 0 && (
-        <RelatedList title="Similar past papers for this course" items={relatedPastPapers.data ?? []} />
-      )}
-      {(popularInCourse.data?.length ?? 0) > 0 && (
-        <RelatedList title="Popular in this course" items={popularInCourse.data ?? []} />
-      )}
-      {(recommendedVideos.data?.length ?? 0) > 0 && (
-        <div className="mt-8">
-          <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-copper">
-            <Youtube className="h-3.5 w-3.5" /> Recommended videos
-          </div>
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {recommendedVideos.data!.map((v) => (
-              <a
-                key={v.videoId}
-                href={`https://www.youtube.com/watch?v=${v.videoId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="group w-44 shrink-0 overflow-hidden rounded-xl border border-border bg-card hover:border-primary/30"
+      {isProcessing ? (
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-10 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <div className="text-sm font-semibold text-foreground">Still generating study tools…</div>
+          <p className="max-w-xs text-xs text-muted-foreground">
+            This page updates itself the moment it's ready — no need to refresh. The file above is already yours to view or download in the meantime.
+          </p>
+        </div>
+      ) : isFailed ? (
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6 text-sm text-foreground">
+          <p>
+            {material.processing_error
+              ? "Generation didn't finish for this one. Here's why:"
+              : "Generation didn't finish for this one. Try re-uploading it, or request it and an admin will take a look."}
+          </p>
+          {material.processing_error && (
+            <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface px-3 py-2 font-mono text-xs text-destructive">
+              {material.processing_error}
+            </p>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">The file itself is safe either way — view or download it above.</p>
+        </div>
+      ) : (
+        <>
+          <div className="relative flex gap-1 rounded-xl border border-border bg-surface-muted p-1">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-colors"
               >
-                {v.thumbnail && <img src={v.thumbnail} alt="" className="h-24 w-full object-cover" />}
-                <div className="p-2">
-                  <div className="line-clamp-2 text-[11px] font-semibold text-foreground group-hover:text-primary">{v.title}</div>
-                  <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{v.channelTitle}</div>
-                </div>
-              </a>
+                {tab === t.id && (
+                  <motion.span
+                    layoutId="study-tab-pill"
+                    className="absolute inset-0 rounded-lg bg-primary"
+                    transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                  />
+                )}
+                <span className={`relative z-10 flex items-center gap-1.5 ${tab === t.id ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                  <t.icon className="h-3.5 w-3.5" /> {t.label}
+                </span>
+              </button>
             ))}
           </div>
-        </div>
+
+          <div className="mt-5 min-h-[160px]">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                {tab === "summary" && (
+                  <div className="rounded-2xl border border-border bg-card p-5 text-sm leading-relaxed text-foreground">
+                    {material.summary || "No summary yet."}
+                    {material.tags && material.tags.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-1.5">
+                        {material.tags.map((tag) => (
+                          <span key={tag} className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {tab === "flashcards" && <FlashcardDeck materialId={material.id} initialCards={offlineBundle?.flashcards} />}
+                {tab === "quiz" && <Quiz materialId={material.id} initialQuestions={offlineBundle?.quiz} />}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+
+          {material.type === "Past Paper" && (relatedPastPapers.data?.length ?? 0) > 0 && (
+            <RelatedList title="Similar past papers for this course" items={relatedPastPapers.data ?? []} />
+          )}
+          {(popularInCourse.data?.length ?? 0) > 0 && (
+            <RelatedList title="Popular in this course" items={popularInCourse.data ?? []} />
+          )}
+          {(recommendedVideos.data?.length ?? 0) > 0 && (
+            <div className="mt-8">
+              <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-copper">
+                <Youtube className="h-3.5 w-3.5" /> Recommended videos
+              </div>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {recommendedVideos.data!.map((v) => (
+                  <a
+                    key={v.videoId}
+                    href={`https://www.youtube.com/watch?v=${v.videoId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group w-44 shrink-0 overflow-hidden rounded-xl border border-border bg-card hover:border-primary/30"
+                  >
+                    {v.thumbnail && <img src={v.thumbnail} alt="" className="h-24 w-full object-cover" />}
+                    <div className="p-2">
+                      <div className="line-clamp-2 text-[11px] font-semibold text-foreground group-hover:text-primary">{v.title}</div>
+                      <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{v.channelTitle}</div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
+
+      <DocumentViewer
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        materialId={material.id}
+        filePath={material.file_path}
+        title={material.title}
+      />
     </div>
   );
 }
@@ -536,4 +508,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-        }
+    }
