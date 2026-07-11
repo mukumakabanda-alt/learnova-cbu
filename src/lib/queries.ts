@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/use-auth";
+import { toast } from "sonner";
 
 type ProgrammeRow = Database["public"]["Tables"]["programmes"]["Row"];
 type CourseRow = Database["public"]["Tables"]["courses"]["Row"];
@@ -315,6 +316,11 @@ export function useIncrementDownload() {
       const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
       if (error) throw error;
     },
+    // This is a background counter, not something the person directly
+    // asked for — the file itself already downloaded fine by the time
+    // this fires, so a failure here logs (for debugging) rather than
+    // interrupting them with a toast.
+    onError: (error: unknown) => console.error("increment_download_count failed:", error),
   });
 }
 
@@ -361,6 +367,14 @@ export function useToggleMaterialLike() {
       qc.invalidateQueries({ queryKey: ["popular-materials"] });
       qc.invalidateQueries({ queryKey: ["popular-courses"] });
       qc.invalidateQueries({ queryKey: ["related-materials"] });
+    },
+    // This used to fail completely silently — the heart button just
+    // looked like it did nothing at all, with zero feedback about why
+    // (not signed in, the migration adding this RPC not applied yet,
+    // a network blip, anything). Now it always says what happened.
+    onError: (error: unknown) => {
+      const message = error instanceof Error && error.message ? error.message : "Couldn't like that right now — try again in a moment.";
+      toast.error(message);
     },
   });
 }
@@ -537,6 +551,12 @@ export function useToggleSaved() {
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-materials"] }),
+    // Same fix as likes: a failed save used to just look like nothing
+    // happened when the bookmark button was tapped.
+    onError: (error: unknown) => {
+      const message = error instanceof Error && error.message ? error.message : "Couldn't save that right now — try again in a moment.";
+      toast.error(message);
+    },
   });
 }
 
@@ -550,6 +570,10 @@ export function useBumpStreak() {
       if (error) throw error;
     },
     onSuccess: () => refreshProfile(),
+    // Fires automatically on page load rather than from a tap, so this
+    // logs for debugging instead of interrupting anyone with a toast —
+    // but it no longer fails completely invisibly either.
+    onError: (error: unknown) => console.error("bump_streak failed:", error),
   });
 }
 
@@ -815,4 +839,4 @@ export function useDemoteFromAdmin() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
   });
-          }
+}
