@@ -137,7 +137,7 @@ export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code)").eq("id", id).maybeSingle();
+      const { data, error } = await supabase.from("materials").select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)").eq("id", id).maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },
