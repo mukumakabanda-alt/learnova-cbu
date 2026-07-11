@@ -2,12 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  useCatalog, useOpenRequests, useProgrammes, useCourses, useCreateCourse,
-  useUpdateCourse, useDeleteCourse, useAdminMaterials, useUpdateMaterial, useDeleteMaterial,
+  useCatalog, useOpenRequests, useProgrammes, useCreateProgramme, useUpdateProgramme, useDeleteProgramme,
+  useCourses, useCreateCourse, useUpdateCourse, useDeleteCourse, useAdminMaterials, useUpdateMaterial, useDeleteMaterial,
   useHeroSlides, useAddHeroSlide, useDeleteHeroSlide, useReorderHeroSlide,
   useAllStudents, useAllUserRoles, usePromoteToAdmin, useDemoteFromAdmin,
   type CourseWithProgramme, type MaterialWithCourse, type HeroSlide,
 } from "@/lib/queries";
+import type { Database } from "@/integrations/supabase/types";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { useRef, useState } from "react";
 import {
@@ -24,7 +25,8 @@ export const Route = createFileRoute("/admin")({
   component: Admin,
 });
 
-type Tab = "overview" | "materials" | "carousel" | "courses" | "students";
+type Tab = "overview" | "materials" | "carousel" | "programmes" | "courses" | "students";
+type ProgrammeRow = Database["public"]["Tables"]["programmes"]["Row"];
 
 function Admin() {
   const { user, profile, isAdmin, loading, signIn, signUp } = useAuth();
@@ -59,6 +61,7 @@ function Admin() {
     { id: "overview", label: "Overview" },
     { id: "materials", label: "Materials" },
     { id: "carousel", label: "Carousel" },
+    { id: "programmes", label: "Programmes" },
     { id: "courses", label: "Courses" },
     { id: "students", label: "Students" },
   ];
@@ -96,6 +99,7 @@ function Admin() {
         )}
         {tab === "materials" && <MaterialsManager courses={courses ?? []} />}
         {tab === "carousel" && <CarouselManager />}
+        {tab === "programmes" && <ProgrammesManager programmes={programmes ?? []} courses={courses ?? []} />}
         {tab === "courses" && <CoursesManager programmes={programmes ?? []} courses={courses ?? []} />}
         {tab === "students" && <StudentsManager currentUserId={user.id} />}
       </div>
@@ -305,7 +309,16 @@ function MaterialsManager({ courses }: { courses: CourseWithProgramme[] }) {
                     {m.courses?.code ?? "No course"} · {m.type} ·{" "}
                     <span className={statusColor[m.status] ?? ""}>{m.status}</span>
                     {m.content_year ? ` · ${m.content_year}` : ""}
+                    {(m.likes_count > 0 || m.download_count > 0) && ` · ${m.likes_count} ❤ · ${m.download_count} downloads`}
                   </div>
+                  {/* The real reason processing failed — most commonly a missing
+                      LOVABLE_API_KEY secret — instead of a dead-end "failed" with
+                      no way to tell why without digging through Edge Function logs. */}
+                  {m.status === "failed" && m.processing_error && (
+                    <div className="mt-1 truncate rounded bg-destructive/10 px-2 py-1 font-mono text-[11px] text-destructive" title={m.processing_error}>
+                      {m.processing_error}
+                    </div>
+                  )}
                 </div>
                 <button onClick={() => startEdit(m)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border text-foreground hover:bg-primary hover:text-primary-foreground">
                   <Pencil className="h-3.5 w-3.5" />
@@ -411,6 +424,188 @@ function CarouselManager() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Programmes manager ───────────────────────────────────────────────────
+// Previously the only way to add or fix a programme (code, name, school,
+// how many years it takes) was a one-off SQL seed — there was no way to do
+// it from here at all, which also meant the Courses tab's programme
+// dropdown could never grow past whatever was seeded at launch.
+function ProgrammesManager({ programmes, courses }: { programmes: ProgrammeRow[]; courses: CourseWithProgramme[] }) {
+  const updateProgramme = useUpdateProgramme();
+  const deleteProgramme = useDeleteProgramme();
+  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: "", school: "", description: "", durationYears: 4 });
+
+  const courseCountByProgramme = new Map<string, number>();
+  for (const c of courses) {
+    if (!c.programme_code) continue;
+    courseCountByProgramme.set(c.programme_code, (courseCountByProgramme.get(c.programme_code) ?? 0) + 1);
+  }
+
+  function startEdit(p: ProgrammeRow) {
+    setEditingCode(p.code);
+    setForm({ name: p.name, school: p.school, description: p.description ?? "", durationYears: p.duration_years });
+  }
+
+  function saveEdit(code: string) {
+    updateProgramme.mutate(
+      { code, name: form.name, school: form.school, description: form.description, durationYears: form.durationYears },
+      { onSuccess: () => setEditingCode(null) },
+    );
+  }
+
+  return (
+    <div className="mt-8 grid gap-6 lg:grid-cols-3">
+      <NewProgrammeCard />
+
+      <div className="rounded-2xl border border-border bg-card p-6 lg:col-span-2">
+        <h2 className="font-display text-xl text-foreground">Programmes ({programmes.length})</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          This is what powers the programme picker when adding or editing a course, and how long each one shows as
+          taking on a student's profile.
+        </p>
+        <div className="mt-4 space-y-2">
+          {programmes.length === 0 && <p className="text-sm text-muted-foreground">No programmes yet — add the first one.</p>}
+          {programmes.map((p) => (
+            <div key={p.code} className="rounded-xl border border-border bg-surface p-3 text-sm">
+              {editingCode === p.code ? (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input value={p.code} disabled className="w-28 rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-muted-foreground" />
+                    <input
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      placeholder="Programme name"
+                      className="flex-1 rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                  </div>
+                  <input
+                    value={form.school}
+                    onChange={(e) => setForm({ ...form, school: e.target.value })}
+                    placeholder="School (e.g. School of Engineering)"
+                    className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                  />
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    placeholder="Description (optional)"
+                    rows={2}
+                    className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground">Duration</label>
+                    <select
+                      value={form.durationYears}
+                      onChange={(e) => setForm({ ...form, durationYears: Number(e.target.value) })}
+                      className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    >
+                      {[1, 2, 3, 4, 5, 6].map((y) => (<option key={y} value={y}>{y} year{y > 1 ? "s" : ""}</option>))}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => saveEdit(p.code)} disabled={updateProgramme.isPending} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+                      Save
+                    </button>
+                    <button onClick={() => setEditingCode(null)} className="rounded-lg bg-surface-muted px-3 py-1.5 text-xs font-semibold text-foreground">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="truncate text-foreground">{p.code} · {p.name}</span>
+                    <div className="text-xs text-muted-foreground">
+                      {p.school} · {p.duration_years} year{p.duration_years > 1 ? "s" : ""} · {courseCountByProgramme.get(p.code) ?? 0} course
+                      {(courseCountByProgramme.get(p.code) ?? 0) === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button onClick={() => startEdit(p)} className="grid h-8 w-8 place-items-center rounded-lg border border-border text-foreground hover:bg-primary hover:text-primary-foreground">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        const courseCount = courseCountByProgramme.get(p.code) ?? 0;
+                        const warning = courseCount > 0
+                          ? `Delete ${p.code}? ${courseCount} course${courseCount === 1 ? "" : "s"} linked to it will become "no programme" rather than being deleted.`
+                          : `Delete ${p.code}?`;
+                        if (confirm(warning)) deleteProgramme.mutate(p.code);
+                      }}
+                      className="grid h-8 w-8 place-items-center rounded-lg border border-border text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewProgrammeCard() {
+  const createProgramme = useCreateProgramme();
+  const [form, setForm] = useState({ code: "", name: "", school: "", description: "", durationYears: 4 });
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6">
+      <h2 className="font-display text-xl text-foreground">New programme</h2>
+      <form
+        className="mt-3 space-y-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          createProgramme.mutate(form, { onSuccess: () => setForm({ code: "", name: "", school: "", description: "", durationYears: 4 }) });
+        }}
+      >
+        <input
+          required
+          placeholder="Code (e.g. BENG-CE)"
+          value={form.code}
+          onChange={(e) => setForm({ ...form, code: e.target.value })}
+          className="w-full rounded-xl border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+        />
+        <input
+          required
+          placeholder="Name (e.g. BEng Civil Engineering)"
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          className="w-full rounded-xl border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+        />
+        <input
+          required
+          placeholder="School (e.g. School of Engineering)"
+          value={form.school}
+          onChange={(e) => setForm({ ...form, school: e.target.value })}
+          className="w-full rounded-xl border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+        />
+        <textarea
+          placeholder="Description (optional)"
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          rows={2}
+          className="w-full rounded-xl border border-input bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+        />
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground">How long it takes</label>
+          <select
+            value={form.durationYears}
+            onChange={(e) => setForm({ ...form, durationYears: Number(e.target.value) })}
+            className="rounded-xl border border-input bg-surface px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+          >
+            {[1, 2, 3, 4, 5, 6].map((y) => (<option key={y} value={y}>{y} year{y > 1 ? "s" : ""}</option>))}
+          </select>
+        </div>
+        <button type="submit" disabled={createProgramme.isPending} className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+          <Plus className="h-4 w-4" /> Add programme
+        </button>
+      </form>
     </div>
   );
 }
