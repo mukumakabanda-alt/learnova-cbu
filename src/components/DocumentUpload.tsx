@@ -5,11 +5,12 @@ import { Upload, Loader2, CheckCircle2, FileWarning } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
 import { useAuth } from "@/hooks/use-auth";
+import { LearnovaAI } from "@/lib/learnova-ai";
 
 const MATERIAL_TYPES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
 
-const STAGES = ["Reading document…", "Uploading…", "Adding to catalogue…", "Generating summary, flashcards & quiz…"];
+const STAGES = ["Reading document…", "Uploading…", "Generating summary, flashcards & quiz…", "Adding to catalogue…"];
 
 // Supabase's Postgrest/Storage errors are real Error instances in this
 // project's SDK version, but this handles any thrown value defensively —
@@ -101,51 +102,96 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const { error: uploadError } = await supabase.storage.from("materials").upload(path, file);
       if (uploadError) throw uploadError;
 
-      // 3. Catalogue it.
-      setStageIndex(2);
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
+      const validYear = year && Number.isFinite(year) ? year : null;
+
+      // 3. Generate study tools — entirely on-device via the Learnova AI
+      // engine (src/lib/learnova-ai), so this costs nothing, needs no
+      // network round trip to any external model, and never leaves a
+      // material sitting in "processing": by the time the row is
+      // inserted below, its summary, flashcards and quiz already exist.
+      // A short/empty extraction skips this step entirely — the material
+      // is still saved either way, same as before.
+      setStageIndex(2);
+      let summary: string | null = null;
+      let tags: string[] = [];
+      let flashcards: { question: string; answer: string; position: number }[] = [];
+      let quiz: { question: string; options: string[]; correctIndex: number; explanation: string; position: number }[] = [];
+
+      if (quality !== "none") {
+        try {
+          const result = LearnovaAI.processDocument(text, {
+            title: file.name.replace(/\.[a-z0-9]+$/i, ""),
+            contentYear: validYear,
+            courseCode: courseCode ?? null,
+            type: finalType,
+          });
+          summary = result.summary || null;
+          tags = result.tags;
+          flashcards = result.flashcards.map((f) => ({ question: f.question, answer: f.answer, position: f.position }));
+          quiz = result.quiz.map((q) => ({
+            question: q.question,
+            options: q.options,
+            correctIndex: q.correctIndex,
+            explanation: q.explanation,
+            position: q.position,
+          }));
+        } catch (e) {
+          // The engine is designed to degrade gracefully on its own and
+          // this shouldn't normally throw, but if it somehow does, the
+          // upload still falls through to catalog_only below rather than
+          // failing outright.
+          console.error("Learnova AI processing failed:", e);
+        }
+      }
+
+      // 4. Catalogue it — one insert, already carrying the AI's results.
+      setStageIndex(3);
+      const hasStudyTools = quality !== "none" && !!summary;
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
           title: file.name.replace(/\.[a-z0-9]+$/i, ""),
           course_code: courseCode ?? null,
           type: finalType,
-          content_year: year && Number.isFinite(year) ? year : null,
+          content_year: validYear,
           pages,
           file_path: path,
-          status: quality === "none" ? "catalog_only" : "processing",
+          status: hasStudyTools ? "ready" : "catalog_only",
           source: "student",
           uploaded_by: user.id,
+          tags: tags.length ? tags : null,
           summary:
-            quality === "none"
-              ? "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it."
-              : null,
+            summary ??
+            "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
         })
         .select()
         .single();
       if (insertError) throw insertError;
 
-      // 4. Generate study tools — only when we actually have something
-      // for the model to work with. A short/empty extraction is not an
-      // error: the material above is already saved either way.
-      if (quality !== "none") {
-        setStageIndex(3);
-        const { error: fnError } = await supabase.functions.invoke("process-material", {
-          body: { materialId: material.id, text, title: material.title },
-        });
-        if (fnError) {
-          // The edge function itself records the real reason on this row
-          // before it returns an error (see process-material's catch
-          // block). The `.is("processing_error", null)` guard means this
-          // client-side fallback only ever fires when that never
-          // happened (e.g. a network blip that kept the request from
-          // reaching the function at all) — it can't clobber a more
-          // specific reason that's already been written.
-          await supabase
-            .from("materials")
-            .update({ status: "failed", processing_error: describeUploadError(fnError) })
-            .eq("id", material.id)
-            .is("processing_error", null);
+      // 5. Save the flashcards & quiz alongside it. Best-effort: if
+      // either insert fails, the material itself is already safely
+      // saved above with its summary — it just opens to "no
+      // flashcards/quiz yet" instead of erroring the whole upload.
+      if (hasStudyTools) {
+        if (flashcards.length) {
+          const { error: fcError } = await supabase
+            .from("flashcards")
+            .insert(flashcards.map((f) => ({ material_id: material.id, question: f.question, answer: f.answer, position: f.position })));
+          if (fcError) console.error("Saving flashcards failed:", fcError);
+        }
+        if (quiz.length) {
+          const { error: quizError } = await supabase.from("quiz_questions").insert(
+            quiz.map((q) => ({
+              material_id: material.id,
+              question: q.question,
+              options: q.options,
+              correct_index: q.correctIndex,
+              explanation: q.explanation,
+              position: q.position,
+            })),
+          );
+          if (quizError) console.error("Saving quiz failed:", quizError);
         }
       }
 
@@ -308,4 +354,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-      }
+}
