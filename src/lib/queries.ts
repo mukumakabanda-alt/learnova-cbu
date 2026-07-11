@@ -159,6 +159,74 @@ export function useSearchCourses(query: string) {
   });
 }
 
+// One consistent search over everything: programmes, courses (code,
+// title, lecturer, description, outline topics) and materials (title,
+// type, tags, and the code/title of whatever course they belong to).
+// Previously Browse's search only looked at courses and Study's search
+// only looked at material titles, so the exact same query could find
+// completely different things depending on which box you typed it into.
+// This single hook backs both entry points now. Client-side filtering
+// for the same reason useSearchCourses is client-side (see its comment
+// above) — small catalogue, and it sidesteps PostgREST's special
+// characters in a raw query string.
+export type UniversalSearchResults = {
+  courses: CourseWithProgramme[];
+  materials: MaterialWithCourse[];
+  programmes: ProgrammeRow[];
+};
+
+export function useUniversalSearch(query: string) {
+  return useQuery({
+    queryKey: ["universal-search", query],
+    queryFn: async (): Promise<UniversalSearchResults> => {
+      const [coursesRes, materialsRes, programmesRes] = await Promise.all([
+        supabase.from("courses").select("*, programmes(name, school)").order("code"),
+        supabase
+          .from("materials")
+          .select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+          .in("status", ["ready", "processing", "catalog_only"])
+          .order("created_at", { ascending: false }),
+        supabase.from("programmes").select("*").neq("code", "ADMIN").order("name"),
+      ]);
+      if (coursesRes.error) throw coursesRes.error;
+      if (materialsRes.error) throw materialsRes.error;
+      if (programmesRes.error) throw programmesRes.error;
+
+      const allCourses = (coursesRes.data ?? []) as CourseWithProgramme[];
+      const allMaterials = (materialsRes.data ?? []) as MaterialWithCourse[];
+      const allProgrammes = (programmesRes.data ?? []) as ProgrammeRow[];
+
+      const needle = query.trim().toLowerCase();
+      if (!needle) return { courses: allCourses, materials: allMaterials, programmes: allProgrammes };
+
+      const courses = allCourses.filter((c) => {
+        const haystacks = [
+          c.code,
+          c.title,
+          c.lecturer ?? "",
+          c.description ?? "",
+          c.programme_code ?? "",
+          c.programmes?.name ?? "",
+          ...(c.topics ?? []),
+        ];
+        return haystacks.some((h) => h.toLowerCase().includes(needle));
+      });
+
+      const materials = allMaterials.filter((m) => {
+        const haystacks = [m.title, m.type, m.courses?.code ?? "", m.courses?.title ?? "", ...(m.tags ?? [])];
+        return haystacks.some((h) => h.toLowerCase().includes(needle));
+      });
+
+      const programmes = allProgrammes.filter((p) => {
+        const haystacks = [p.code, p.name, p.school];
+        return haystacks.some((h) => h.toLowerCase().includes(needle));
+      });
+
+      return { courses, materials, programmes };
+    },
+  });
+}
+
 // ── Materials ─────────────────────────────────────────────────────────
 export function useMaterialsForCourse(courseCode: string) {
   return useQuery({
@@ -747,4 +815,4 @@ export function useDemoteFromAdmin() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
   });
-        }
+          }
