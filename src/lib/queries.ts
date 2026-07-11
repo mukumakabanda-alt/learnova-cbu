@@ -35,6 +35,66 @@ export function useProgrammes() {
   });
 }
 
+// ── Admin: programmes ──────────────────────────────────────────────────
+// Programmes previously could only ever be created via a one-off SQL seed
+// — there was no way to add a new programme, fix its name/school, or set
+// how many years it takes from inside the admin panel itself. Courses
+// already reference programme_code as a foreign key, so creating a
+// programme here is what unlocks assigning courses to it in the Courses
+// tab (a new programme with no courses yet is expected and fine).
+export function useCreateProgramme() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { code: string; name: string; school: string; description?: string; durationYears: number }) => {
+      const { error } = await supabase.from("programmes").insert({
+        code: input.code.trim().toUpperCase(),
+        name: input.name.trim(),
+        school: input.school.trim(),
+        description: input.description ?? "",
+        duration_years: input.durationYears,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["programmes"] }),
+  });
+}
+
+export function useUpdateProgramme() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { code: string; name?: string; school?: string; description?: string; durationYears?: number }) => {
+      const { code, durationYears, ...rest } = input;
+      const { error } = await supabase
+        .from("programmes")
+        .update({ ...rest, ...(durationYears !== undefined ? { duration_years: durationYears } : {}) })
+        .eq("code", code);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["programmes"] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
+  });
+}
+
+// Deleting a programme cascades to its courses (courses.programme_code has
+// ON DELETE SET NULL in the newer schema, so courses survive as
+// "no programme" rather than vanishing — same safety net the Courses tab
+// already relies on for a deleted course's materials).
+export function useDeleteProgramme() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (code: string) => {
+      const { error } = await supabase.from("programmes").delete().eq("code", code);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["programmes"] });
+      qc.invalidateQueries({ queryKey: ["courses"] });
+    },
+  });
+}
+
 export function useCourses(filters?: { programmeCode?: string | null; year?: number | null }) {
   return useQuery({
     queryKey: ["courses", filters],
@@ -148,8 +208,8 @@ export function useMaterial(id: string) {
 
 // Powers two things on the study page from one query: "similar past
 // papers for this course" (pass type: "Past Paper") and "popular in this
-// course" (no type filter). Ordered by download_count first so genuinely
-// well-used material surfaces before merely-recent material.
+// course" (no type filter). Ordered by likes then download_count first so
+// genuinely well-used material surfaces before merely-recent material.
 export function useRelatedMaterials(
   courseCode: string | null | undefined,
   options: { excludeId?: string; type?: string; limit?: number } = {},
@@ -164,6 +224,7 @@ export function useRelatedMaterials(
         .select("*")
         .eq("course_code", courseCode)
         .in("status", ["ready", "catalog_only"])
+        .order("likes_count", { ascending: false })
         .order("download_count", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(limit + 1); // +1 so we still have `limit` results after excluding the current one
@@ -185,6 +246,114 @@ export function useIncrementDownload() {
     mutationFn: async (materialId: string) => {
       const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
       if (error) throw error;
+    },
+  });
+}
+
+// ── Likes ───────────────────────────────────────────────────────────────
+// Whether the signed-in visitor has already liked this specific material —
+// separate from `materials.likes_count` (the public total everyone sees),
+// this is just enough to know which state the heart button should render.
+export function useMaterialLikeStatus(materialId: string) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["material-like", materialId, user?.id],
+    queryFn: async (): Promise<boolean> => {
+      const { data, error } = await supabase
+        .from("material_likes")
+        .select("material_id")
+        .eq("material_id", materialId)
+        .eq("profile_id", user!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return !!data;
+    },
+    enabled: !!materialId && !!user,
+  });
+}
+
+// Toggles like/unlike through the toggle_material_like RPC (see the
+// engagement migration) so the denormalised materials.likes_count — the
+// number every "popular" sort actually reads — never drifts out of sync
+// with the real rows in material_likes, even under concurrent taps.
+export function useToggleMaterialLike() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (materialId: string): Promise<boolean> => {
+      if (!user) throw new Error("Sign in to like materials.");
+      const { data, error } = await supabase.rpc("toggle_material_like", { p_material_id: materialId });
+      if (error) throw error;
+      return !!data;
+    },
+    onSuccess: (_liked, materialId) => {
+      qc.invalidateQueries({ queryKey: ["material-like", materialId] });
+      qc.invalidateQueries({ queryKey: ["material", materialId] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+      qc.invalidateQueries({ queryKey: ["popular-materials"] });
+      qc.invalidateQueries({ queryKey: ["popular-courses"] });
+      qc.invalidateQueries({ queryKey: ["related-materials"] });
+    },
+  });
+}
+
+// ── Real "popular" — used by the homepage. Only ever reflects genuine
+// engagement (likes + downloads); the caller is expected to hide its
+// section entirely when this returns an empty array rather than padding
+// it out with recent-but-unproven material, per the "don't show anything
+// unless it's actually popular" rule the homepage follows.
+export function usePopularMaterials(limit = 8) {
+  return useQuery({
+    queryKey: ["popular-materials", limit],
+    queryFn: async (): Promise<MaterialWithCourse[]> => {
+      const { data, error } = await supabase
+        .from("materials")
+        .select("*, courses(title, code)")
+        .eq("status", "ready")
+        .or("likes_count.gt.0,download_count.gt.0")
+        .order("likes_count", { ascending: false })
+        .order("download_count", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? []) as MaterialWithCourse[];
+    },
+  });
+}
+
+// Aggregates the same real engagement signal up to the course level, for
+// the homepage's "Popular courses right now" section. Courses with zero
+// engagement across all their materials are excluded outright — a course
+// simply doesn't show up here until real students have actually liked or
+// downloaded something from it.
+export function usePopularCourses(limit = 6) {
+  return useQuery({
+    queryKey: ["popular-courses", limit],
+    queryFn: async (): Promise<CourseWithProgramme[]> => {
+      const { data: engagement, error: engagementError } = await supabase
+        .from("materials")
+        .select("course_code, likes_count, download_count")
+        .eq("status", "ready")
+        .not("course_code", "is", null);
+      if (engagementError) throw engagementError;
+
+      const scoreByCourse = new Map<string, number>();
+      for (const row of engagement ?? []) {
+        if (!row.course_code) continue;
+        const score = (row.likes_count ?? 0) * 3 + (row.download_count ?? 0); // a like is a stronger signal than a download
+        scoreByCourse.set(row.course_code, (scoreByCourse.get(row.course_code) ?? 0) + score);
+      }
+      const ranked = [...scoreByCourse.entries()].filter(([, score]) => score > 0).sort((a, b) => b[1] - a[1]).slice(0, limit);
+      if (ranked.length === 0) return [];
+
+      const codes = ranked.map(([code]) => code);
+      const { data: courses, error: coursesError } = await supabase
+        .from("courses")
+        .select("*, programmes(name, school)")
+        .in("code", codes);
+      if (coursesError) throw coursesError;
+
+      const byCode = new Map((courses ?? []).map((c) => [c.code, c as CourseWithProgramme]));
+      return ranked.map(([code]) => byCode.get(code)).filter((c): c is CourseWithProgramme => !!c);
     },
   });
 }
@@ -310,6 +479,42 @@ export function useBumpStreak() {
     mutationFn: async () => {
       if (!user) return;
       const { error } = await supabase.rpc("bump_streak", { p_profile_id: user.id });
+      if (error) throw error;
+    },
+    onSuccess: () => refreshProfile(),
+  });
+}
+
+// ── Profile self-edit ───────────────────────────────────────────────────
+// The "users update own profile" RLS policy has always allowed this —
+// there was just no UI or hook wired up to it, so students had no way to
+// fix a typo in their name, correct their programme/year, or add a phone
+// number after signing up.
+export function useUpdateProfile() {
+  const { user, refreshProfile } = useAuth();
+  return useMutation({
+    mutationFn: async (input: {
+      fullName?: string;
+      studentNumber?: string | null;
+      school?: string;
+      programmeCode?: string;
+      year?: number;
+      semester?: 1 | 2;
+      phone?: string | null;
+    }) => {
+      if (!user) throw new Error("Sign in first.");
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          ...(input.fullName !== undefined ? { full_name: input.fullName } : {}),
+          ...(input.studentNumber !== undefined ? { student_number: input.studentNumber } : {}),
+          ...(input.school !== undefined ? { school: input.school } : {}),
+          ...(input.programmeCode !== undefined ? { programme_code: input.programmeCode } : {}),
+          ...(input.year !== undefined ? { year: input.year } : {}),
+          ...(input.semester !== undefined ? { semester: input.semester } : {}),
+          ...(input.phone !== undefined ? { phone: input.phone } : {}),
+        })
+        .eq("id", user.id);
       if (error) throw error;
     },
     onSuccess: () => refreshProfile(),
@@ -542,4 +747,4 @@ export function useDemoteFromAdmin() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
   });
-    }
+        }
