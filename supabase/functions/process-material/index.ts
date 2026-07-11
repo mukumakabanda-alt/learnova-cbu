@@ -110,12 +110,16 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !lovableApiKey) {
-    return jsonResponse({ error: "Missing required environment secrets" }, 500);
-  }
-
   // Service-role client: bypasses RLS. Used ONLY for reads that answer
   // ownership questions definitively, and for the pipeline's own writes.
+  // Created eagerly (once we at least have the two Supabase secrets) so
+  // that if the AI key specifically is what's missing, we can still write
+  // a clear reason onto the material row below instead of just 500-ing
+  // into the void — that clear reason is what turns "I don't know if this
+  // is working" into "oh, I just need to add LOVABLE_API_KEY."
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    return jsonResponse({ error: "Missing required Supabase environment secrets" }, 500);
+  }
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
   // User-scoped client: carries the caller's own JWT (supabase.functions.invoke
@@ -141,6 +145,16 @@ Deno.serve(async (req: Request) => {
 
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
+    }
+
+    // Now that we know which material this is, a missing AI key can be
+    // recorded as a clear, actionable reason on the row itself rather than
+    // just failing silently — see the catch block below, which this
+    // deliberately funnels into by throwing here instead of returning.
+    if (!lovableApiKey) {
+      throw new Error(
+        "AI generation isn't configured yet: the LOVABLE_API_KEY secret is missing. Add it in Supabase → Project Settings → Edge Functions → Secrets (or Lovable Cloud → Backend → Secrets), then re-upload or ask an admin to reprocess this file.",
+      );
     }
 
     // Ownership + state check. Done explicitly in code rather than relying
@@ -235,6 +249,7 @@ Deno.serve(async (req: Request) => {
         status: "ready",
         summary: result.summary,
         tags: result.tags,
+        processing_error: null,
         // Only fill content_year if it's currently unset — never overwrite
         // a year the uploader (or an admin) deliberately entered.
         ...(material.content_year == null && result.detected_year != null ? { content_year: result.detected_year } : {}),
@@ -245,9 +260,16 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: true });
   } catch (error) {
     console.error(error);
+    const message = error instanceof Error ? error.message : "Unknown error";
     if (materialId) {
-      await admin.from("materials").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", materialId);
+      // Written even though `admin` requires supabaseUrl/serviceRoleKey to
+      // exist — both are guaranteed by this point, since we return early
+      // above whenever either is missing, before materialId is ever read.
+      await admin
+        .from("materials")
+        .update({ status: "failed", processing_error: message, updated_at: new Date().toISOString() })
+        .eq("id", materialId);
     }
-    return jsonResponse({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
+    return jsonResponse({ error: message }, 500);
   }
 });
