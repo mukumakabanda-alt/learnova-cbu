@@ -10,11 +10,15 @@ type FlashcardRow = Database["public"]["Tables"]["flashcards"]["Row"];
 type QuizRow = Database["public"]["Tables"]["quiz_questions"]["Row"];
 type RequestRow = Database["public"]["Tables"]["material_requests"]["Row"];
 type SavedRow = Database["public"]["Tables"]["saved_materials"]["Row"];
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
+type UserRoleRow = Database["public"]["Tables"]["user_roles"]["Row"];
+type HeroSlideRow = Database["public"]["Tables"]["hero_slides"]["Row"];
 
-type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
+export type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
 export type MaterialWithCourse = MaterialRow & { courses: { title: string; code: string } | null };
 type RequestWithCourse = RequestRow & { courses: { title: string } | null };
 type SavedWithMaterial = SavedRow & { materials: MaterialWithCourse | null };
+export type HeroSlide = HeroSlideRow & { url: string };
 
 // ── Programmes & courses ───────────────────────────────────────────────
 export function useProgrammes() {
@@ -324,4 +328,215 @@ export function useCreateCourse() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
   });
+}
+
+// Edit an EXISTING course's outline (title, lecturer, description,
+// topics, programme, year/semester) — the admin panel previously could
+// only create new courses, never touch ones already in the catalogue.
+export function useUpdateCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      code: string;
+      title?: string;
+      programmeCode?: string;
+      year?: number;
+      semester?: 1 | 2;
+      lecturer?: string | null;
+      description?: string;
+      topics?: string[];
+    }) => {
+      const { code, programmeCode, ...rest } = input;
+      const { error } = await supabase
+        .from("courses")
+        .update({ ...rest, ...(programmeCode !== undefined ? { programme_code: programmeCode } : {}) })
+        .eq("code", code);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+export function useDeleteCourse() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (code: string) => {
+      const { error } = await supabase.from("courses").delete().eq("code", code);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses"] }),
+  });
+}
+
+// ── Admin: materials manager ───────────────────────────────────────────
+// Every material regardless of status — the public useCatalog() hook
+// deliberately excludes anything an ordinary visitor shouldn't see, but
+// an admin managing the catalogue needs to see (and fix) failed uploads
+// too, which is exactly what the "Owners and admins view all their
+// materials" RLS policy (see the new migration) now allows.
+export function useAdminMaterials() {
+  const { isAdmin } = useAuth();
+  return useQuery({
+    queryKey: ["admin-materials"],
+    queryFn: async (): Promise<MaterialWithCourse[]> => {
+      const { data, error } = await supabase
+        .from("materials")
+        .select("*, courses(title, code)")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as MaterialWithCourse[];
+    },
+    enabled: isAdmin,
+  });
+}
+
+export function useUpdateMaterial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      title?: string;
+      type?: string;
+      course_code?: string | null;
+      content_year?: number | null;
+    }) => {
+      const { id, ...fields } = input;
+      const { error } = await supabase.from("materials").update(fields).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-materials"] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+    },
+  });
+}
+
+export function useDeleteMaterial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (material: { id: string; file_path: string | null }) => {
+      if (material.file_path) {
+        await supabase.storage.from("materials").remove([material.file_path]);
       }
+      const { error } = await supabase.from("materials").delete().eq("id", material.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-materials"] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+    },
+  });
+}
+
+// ── Admin: hero carousel ────────────────────────────────────────────────
+// Reads from the hero_slides table + 'hero-images' storage bucket (see
+// the new migration). Falls back to nothing here if empty — the
+// component itself decides what to show when there are zero rows.
+export function useHeroSlides() {
+  return useQuery({
+    queryKey: ["hero-slides"],
+    queryFn: async (): Promise<HeroSlide[]> => {
+      const { data, error } = await supabase.from("hero_slides").select("*").order("position");
+      if (error) throw error;
+      return (data ?? []).map((s) => ({
+        ...s,
+        url: supabase.storage.from("hero-images").getPublicUrl(s.image_path).data.publicUrl,
+      }));
+    },
+  });
+}
+
+export function useAddHeroSlide() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const path = `${crypto.randomUUID()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage.from("hero-images").upload(path, file);
+      if (uploadError) throw uploadError;
+      const { data: existing } = await supabase
+        .from("hero_slides")
+        .select("position")
+        .order("position", { ascending: false })
+        .limit(1);
+      const nextPosition = (existing?.[0]?.position ?? -1) + 1;
+      const { error } = await supabase.from("hero_slides").insert({ image_path: path, position: nextPosition });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["hero-slides"] }),
+  });
+}
+
+export function useDeleteHeroSlide() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (slide: { id: string; image_path: string }) => {
+      await supabase.storage.from("hero-images").remove([slide.image_path]);
+      const { error } = await supabase.from("hero_slides").delete().eq("id", slide.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["hero-slides"] }),
+  });
+}
+
+// Swaps two slides' positions — used by the up/down reorder buttons.
+export function useReorderHeroSlide() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ a, b }: { a: { id: string; position: number }; b: { id: string; position: number } }) => {
+      await Promise.all([
+        supabase.from("hero_slides").update({ position: b.position }).eq("id", a.id),
+        supabase.from("hero_slides").update({ position: a.position }).eq("id", b.id),
+      ]);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["hero-slides"] }),
+  });
+}
+
+// ── Admin: student directory ───────────────────────────────────────────
+export function useAllStudents() {
+  const { isAdmin } = useAuth();
+  return useQuery({
+    queryKey: ["admin-students"],
+    queryFn: async (): Promise<ProfileRow[]> => {
+      const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as ProfileRow[];
+    },
+    enabled: isAdmin,
+  });
+}
+
+export function useAllUserRoles() {
+  const { isAdmin } = useAuth();
+  return useQuery({
+    queryKey: ["admin-user-roles"],
+    queryFn: async (): Promise<UserRoleRow[]> => {
+      const { data, error } = await supabase.from("user_roles").select("*");
+      if (error) throw error;
+      return (data ?? []) as UserRoleRow[];
+    },
+    enabled: isAdmin,
+  });
+}
+
+export function usePromoteToAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await supabase.rpc("promote_user_to_admin", { p_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
+  });
+}
+
+export function useDemoteFromAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await supabase.rpc("demote_admin_role", { p_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
+  });
+    }
