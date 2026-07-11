@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
-  Download, WifiOff, HardDriveDownload, Check, AlertTriangle, Youtube, Flame,
+  Download, Eye, Share2, Heart, WifiOff, HardDriveDownload, Check, AlertTriangle, Youtube, Flame,
 } from "lucide-react";
-import { useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload, useYoutubeRecommendations, type MaterialWithCourse } from "@/lib/queries";
+import { toast } from "sonner";
+import {
+  useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload,
+  useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike, type MaterialWithCourse,
+} from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, getOfflineMaterial, useOnlineStatus } from "@/lib/offline";
 import type { Database } from "@/integrations/supabase/types";
 import { Link } from "@tanstack/react-router";
@@ -24,6 +29,20 @@ type Tab = (typeof TABS)[number]["id"];
 
 const CURRENT_YEAR = new Date().getFullYear();
 
+// Uploads are stored at `${userId}/${crypto.randomUUID()}-${originalName}`.
+// A v4 UUID is always exactly 36 characters, so everything after that
+// (plus the separating hyphen) is the real original filename — used so a
+// forced download saves as "Macro Notes Week 3.pdf" instead of a bare
+// UUID with no extension a person can't recognise in their Downloads folder.
+function originalFileName(filePath: string, fallbackTitle: string): string {
+  const base = filePath.split("/").pop() ?? "";
+  const name = base.length > 37 ? base.slice(37) : base;
+  return name || fallbackTitle;
+}
+
+const pillBtn =
+  "inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:cursor-default disabled:opacity-50";
+
 export function StudyPanel({
   material,
   offlineBundle = null,
@@ -33,12 +52,16 @@ export function StudyPanel({
   offlineBundle?: { flashcards: FlashcardRow[]; quiz: QuizRow[] } | null;
 }) {
   const [tab, setTab] = useState<Tab>("summary");
+  const { user } = useAuth();
   const bumpStreak = useBumpStreak();
   const isOnline = useOnlineStatus();
   const incrementDownload = useIncrementDownload();
+  const { data: liked } = useMaterialLikeStatus(material.id);
+  const toggleLike = useToggleMaterialLike();
 
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   // These share a react-query cache key with the ones FlashcardDeck/Quiz
   // use, so this doesn't cause an extra network round trip — it just lets
@@ -88,12 +111,85 @@ export function StudyPanel({
     }
   }
 
+  // Opens the file in a new tab for reading online. The blank tab is
+  // opened synchronously, before the `await` below — that's not
+  // decorative. Mobile Safari and Chrome only allow `window.open` to
+  // succeed when it happens directly inside a click handler; the instant
+  // an `await` runs first, the browser no longer considers the window
+  // "directly requested" and silently blocks it. That silent block (no
+  // error, nothing visibly happens) is exactly what "I can't view it,
+  // nothing happens" looks like from the outside.
+  async function handleView() {
+    if (!material.file_path) return;
+    const win = window.open("", "_blank");
+    const { data, error } = await supabase.storage.from("materials").createSignedUrl(material.file_path, 60);
+    if (error || !data) {
+      win?.close();
+      toast.error("Couldn't open that file right now — try again in a moment.");
+      return;
+    }
+    incrementDownload.mutate(material.id);
+    if (win) win.location.href = data.signedUrl;
+    else window.location.href = data.signedUrl; // popup was blocked anyway — fall back to navigating this tab
+  }
+
+  // Forces an actual save-to-device download (rather than an inline
+  // preview) by asking Storage for a signed URL with Content-Disposition
+  // set to attachment, restoring the real original filename + extension.
+  // A plain link click (not window.open) triggers this with no popup
+  // blocker involved, since nothing opens a new window or tab.
   async function handleDownload() {
     if (!material.file_path) return;
-    const { data, error } = await supabase.storage.from("materials").createSignedUrl(material.file_path, 60);
-    if (error) return;
-    incrementDownload.mutate(material.id);
-    window.open(data.signedUrl, "_blank");
+    setDownloading(true);
+    try {
+      const filename = originalFileName(material.file_path, material.title);
+      const { data, error } = await supabase.storage
+        .from("materials")
+        .createSignedUrl(material.file_path, 60, { download: filename });
+      if (error || !data) {
+        toast.error("Couldn't download that file right now — try again in a moment.");
+        return;
+      }
+      incrementDownload.mutate(material.id);
+      const link = document.createElement("a");
+      link.href = data.signedUrl;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  // Shares the app's own page link (not a raw storage URL, which would
+  // expire in seconds and leak the storage path) — works for anyone,
+  // signed in or not, once the file itself is ready (see the storage RLS
+  // policy added for anon reads on ready/catalog_only materials).
+  async function handleShare() {
+    const url = `${window.location.origin}/study/${material.id}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: material.title, text: `Check out "${material.title}" on Learnova`, url });
+      } catch {
+        // The person cancelled the native share sheet — not a real error.
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied — share it with anyone, signed in or not.");
+    } catch {
+      toast.error("Couldn't copy the link automatically — copy it from the address bar instead.");
+    }
+  }
+
+  function handleLike() {
+    if (!user) {
+      toast.error("Sign in to like this.");
+      return;
+    }
+    toggleLike.mutate(material.id);
   }
 
   const isOutdated = material.content_year != null && CURRENT_YEAR - material.content_year >= 5;
@@ -111,11 +207,26 @@ export function StudyPanel({
   if (material.status === "failed") {
     return (
       <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6 text-sm text-foreground">
-        Generation didn't finish for this one. Try re-uploading it, or request it and an admin will take a look. The file itself is safe either way — downloads below still work.
+        <p>
+          {material.processing_error
+            ? "Generation didn't finish for this one. Here's why:"
+            : "Generation didn't finish for this one. Try re-uploading it, or request it and an admin will take a look."}
+        </p>
+        {material.processing_error && (
+          <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface px-3 py-2 font-mono text-xs text-destructive">
+            {material.processing_error}
+          </p>
+        )}
+        <p className="mt-2 text-xs text-muted-foreground">The file itself is safe either way — view or download it below.</p>
         {material.file_path && (
-          <button onClick={handleDownload} className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-surface px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted">
-            <Download className="h-3.5 w-3.5" /> Download the original file
-          </button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button onClick={handleView} className={pillBtn}>
+              <Eye className="h-3.5 w-3.5" /> View
+            </button>
+            <button onClick={handleDownload} disabled={downloading} className={pillBtn}>
+              {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Download
+            </button>
+          </div>
         )}
       </div>
     );
@@ -123,13 +234,29 @@ export function StudyPanel({
 
   return (
     <div>
-      {/* Utility row: download, offline, outdated flag — quiet by default, only shows what applies */}
+      {/* Utility row: view, download, share, like, offline, outdated flag — quiet by default, only shows what applies */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {material.file_path && (
-          <button onClick={handleDownload} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted">
-            <Download className="h-3.5 w-3.5" /> Download
-          </button>
+          <>
+            <button onClick={handleView} className={pillBtn}>
+              <Eye className="h-3.5 w-3.5" /> View
+            </button>
+            <button onClick={handleDownload} disabled={downloading} className={pillBtn}>
+              {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Download
+            </button>
+          </>
         )}
+        <button onClick={handleShare} className={pillBtn}>
+          <Share2 className="h-3.5 w-3.5" /> Share
+        </button>
+        <button
+          onClick={handleLike}
+          disabled={toggleLike.isPending}
+          className={`${pillBtn} ${liked ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/10" : ""}`}
+        >
+          <Heart className={`h-3.5 w-3.5 ${liked ? "fill-current" : ""}`} />
+          {material.likes_count > 0 ? material.likes_count : "Like"}
+        </button>
         <button
           onClick={handleSaveOffline}
           disabled={offlineSaved || savingOffline}
@@ -409,4 +536,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-}
+        }
