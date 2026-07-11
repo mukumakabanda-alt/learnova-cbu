@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Upload, Loader2, CheckCircle2, FileWarning } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { extractDocumentText, fileKindLabel } from "@/lib/document-text";
+import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
 import { useAuth } from "@/hooks/use-auth";
 
 const MATERIAL_TYPES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
@@ -30,6 +30,10 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [type, setType] = useState<MaterialType>("Notes");
+  // Tracks whether the person has explicitly tapped a category themselves —
+  // once they have, the auto-suggestion below backs off completely and
+  // never overwrites their choice.
+  const [typeManuallySet, setTypeManuallySet] = useState(false);
   const [contentYear, setContentYear] = useState("");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,6 +62,19 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
     setOcrStage(null);
     setOcrProgress(0);
 
+    // Auto-categorize from the filename alone, unless the person already
+    // picked a category themselves before choosing the file — in which
+    // case their choice is left alone completely, both now and after the
+    // real text is extracted below. `finalType` (a plain local variable,
+    // not the `type` state — state updates don't land synchronously, so
+    // reading `type` again later in this same function would still see
+    // the old value) is what actually gets saved.
+    let finalType: MaterialType = type;
+    if (!typeManuallySet) {
+      finalType = guessMaterialType(file.name);
+      setType(finalType);
+    }
+
     try {
       // 1. Read — pulls whatever text we can out of literally any file
       // type, including running OCR for scanned PDFs and photos. This
@@ -68,6 +85,14 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         setOcrStage(p.stage);
         setOcrProgress(p.progress);
       });
+
+      // Refine the filename-only guess now that we have real content to
+      // look at (catches e.g. "notes.pdf" that's actually a past exam
+      // paper). Never overrides a category the person picked themselves.
+      if (!typeManuallySet && quality !== "none") {
+        finalType = guessMaterialType(file.name, text);
+        setType(finalType);
+      }
 
       // 2. Upload the raw file — always happens, regardless of how well
       // the text extraction went, so downloads always work.
@@ -84,7 +109,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         .insert({
           title: file.name.replace(/\.[a-z0-9]+$/i, ""),
           course_code: courseCode ?? null,
-          type,
+          type: finalType,
           content_year: year && Number.isFinite(year) ? year : null,
           pages,
           file_path: path,
@@ -109,9 +134,18 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           body: { materialId: material.id, text, title: material.title },
         });
         if (fnError) {
-          // Best-effort: don't leave the row stuck on "processing"
-          // forever if the function call itself couldn't complete.
-          await supabase.from("materials").update({ status: "failed" }).eq("id", material.id);
+          // The edge function itself records the real reason on this row
+          // before it returns an error (see process-material's catch
+          // block). The `.is("processing_error", null)` guard means this
+          // client-side fallback only ever fires when that never
+          // happened (e.g. a network blip that kept the request from
+          // reaching the function at all) — it can't clobber a more
+          // specific reason that's already been written.
+          await supabase
+            .from("materials")
+            .update({ status: "failed", processing_error: describeUploadError(fnError) })
+            .eq("id", material.id)
+            .is("processing_error", null);
         }
       }
 
@@ -134,13 +168,19 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
   return (
     <div>
+      <p className="mb-1.5 text-[11px] text-muted-foreground">
+        We'll guess a category from the file itself — tap one below anytime to set it yourself.
+      </p>
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {MATERIAL_TYPES.map((t) => (
           <button
             key={t}
             type="button"
             disabled={busy}
-            onClick={() => setType(t)}
+            onClick={() => {
+              setType(t);
+              setTypeManuallySet(true);
+            }}
             className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
               type === t ? "bg-primary text-primary-foreground" : "bg-surface-muted text-muted-foreground hover:text-foreground"
             }`}
@@ -268,4 +308,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-    }
+      }
