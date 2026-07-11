@@ -72,20 +72,40 @@ async function getDownloadUrl(filePath: string, filename: string): Promise<strin
   return data.signedUrl;
 }
 
-// Forces an actual save-to-device download (never an inline preview) by
-// asking Storage for a signed URL with Content-Disposition set to
-// attachment, then clicking a real, in-DOM anchor tag pointed at it. A
-// plain link click like this triggers the browser's native "downloading…"
-// UI immediately, with no popup blocker involved (nothing opens a new
-// window or tab), and restores the real original filename + extension.
+// Forces an actual save-to-device download (never an inline preview).
+//
+// This fetches the file into memory first and downloads from a same-
+// origin blob: URL, rather than pointing an anchor straight at the
+// (cross-origin) Storage URL. A plain cross-origin anchor click is what
+// a number of mobile browsers — Safari on iOS in particular, and
+// Android in-app browsers like WhatsApp/Facebook/Instagram's built-in
+// browser — quietly turn into "just open/navigate to the file" instead
+// of a real download, no matter what the `download` attribute or the
+// signed URL's Content-Disposition header say. Downloading the bytes
+// first and handing the browser a blob: URL (always same-origin, always
+// local) is what makes the save-to-device behaviour reliable everywhere
+// — this is what "I can't download" on a phone almost always turns out
+// to actually be.
 export async function forceDownload(filePath: string, fallbackTitle: string): Promise<void> {
   const filename = originalFileName(filePath, fallbackTitle);
   const url = await getDownloadUrl(filePath, filename);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.rel = "noopener";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-                                      }
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Couldn't fetch the file (status ${response.status}).`);
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+
+  try {
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    // Revoking immediately can race the browser actually starting to
+    // read the blob on some devices, so this waits a few seconds first.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+  }
+  }
