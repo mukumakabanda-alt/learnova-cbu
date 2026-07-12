@@ -160,7 +160,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           status: hasStudyTools ? "ready" : "catalog_only",
           source: "student",
           uploaded_by: user.id,
-          tags: tags.length ? tags : null,
+          tags: tags.length ? tags : [],
           summary:
             summary ??
             "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
