@@ -5,6 +5,7 @@ import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useCatalog } from "@/lib/queries";
+import { useAuth } from "@/hooks/use-auth";
 import { FileText, Loader2, Search } from "lucide-react";
 
 export const Route = createFileRoute("/study")({
@@ -32,7 +33,11 @@ function statusLabel(status: string) {
 
 function StudyHub() {
   const [q, setQ] = useState("");
-  const { data: materials, isLoading } = useCatalog(q);
+  const { profile } = useAuth();
+  const [showAll, setShowAll] = useState(false);
+  const programmeFilter = !showAll && profile?.programme_code ? profile.programme_code : null;
+  const { data: materials, isLoading } = useCatalog(q, programmeFilter);
+
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -57,6 +62,17 @@ function StudyHub() {
                 className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
               />
             </div>
+
+            {profile?.programme_code && (
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  {showAll ? "Showing every programme" : <>Curated for <span className="font-semibold text-copper">{profile.programme_code}</span></>}
+                </span>
+                <button onClick={() => setShowAll(!showAll)} className="rounded-full border border-border px-3 py-1 font-semibold text-foreground hover:bg-surface-muted">
+                  {showAll ? "Show my programme only" : "Show all programmes"}
+                </button>
+              </div>
+            )}
 
             <div className="mt-4 grid gap-3">
               {isLoading ? (

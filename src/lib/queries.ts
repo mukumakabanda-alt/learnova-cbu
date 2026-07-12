@@ -245,15 +245,21 @@ export function useMaterialsForCourse(courseCode: string) {
   });
 }
 
-export function useCatalog(search?: string) {
+export function useCatalog(search?: string, programmeCode?: string | null) {
   return useQuery({
-    queryKey: ["catalog", search],
+    queryKey: ["catalog", search, programmeCode ?? null],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
+      // When programmeCode is set we inner-join courses and filter on it so
+      // students only see material that actually belongs to their programme
+      // (plus general uploads with no course attached). Without it we return
+      // everything, same as before.
+      const relation = programmeCode ? "courses!inner(title, code, programme_code)" : "courses(title, code)";
       let q = supabase
         .from("materials")
-        .select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+        .select(`*, ${relation}, uploader:profiles!materials_uploaded_by_profile_fkey(full_name)`)
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
+      if (programmeCode) q = q.eq("courses.programme_code", programmeCode);
       if (search?.trim()) q = q.ilike("title", `%${search}%`);
       const { data, error } = await q;
       if (error) throw error;
@@ -261,6 +267,7 @@ export function useCatalog(search?: string) {
     },
   });
 }
+
 
 export function useMaterial(id: string) {
   return useQuery({
