@@ -5,6 +5,7 @@ import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useCatalog } from "@/lib/queries";
+import { useAuth } from "@/hooks/use-auth";
 import { FileText, Loader2, Search } from "lucide-react";
 
 export const Route = createFileRoute("/study")({
@@ -32,7 +33,11 @@ function statusLabel(status: string) {
 
 function StudyHub() {
   const [q, setQ] = useState("");
-  const { data: materials, isLoading } = useCatalog(q);
+  const { profile } = useAuth();
+  const [showAll, setShowAll] = useState(false);
+  const programmeFilter = !showAll && profile?.programme_code ? profile.programme_code : null;
+  const { data: materials, isLoading } = useCatalog(q, programmeFilter);
+
 
   return (
     <div className="min-h-screen bg-background pb-20">
