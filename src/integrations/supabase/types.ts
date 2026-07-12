@@ -120,39 +120,6 @@ export type Database = {
         }
         Relationships: []
       }
-      material_likes: {
-        Row: {
-          created_at: string
-          material_id: string
-          profile_id: string
-        }
-        Insert: {
-          created_at?: string
-          material_id: string
-          profile_id: string
-        }
-        Update: {
-          created_at?: string
-          material_id?: string
-          profile_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "material_likes_material_id_fkey"
-            columns: ["material_id"]
-            isOneToOne: false
-            referencedRelation: "materials"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "material_likes_profile_id_fkey"
-            columns: ["profile_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       material_requests: {
         Row: {
           course_code: string | null
@@ -202,9 +169,7 @@ export type Database = {
           download_count: number
           file_path: string | null
           id: string
-          likes_count: number
           pages: number | null
-          processing_error: string | null
           source: string
           status: Database["public"]["Enums"]["material_status"]
           summary: string | null
@@ -221,9 +186,7 @@ export type Database = {
           download_count?: number
           file_path?: string | null
           id?: string
-          likes_count?: number
           pages?: number | null
-          processing_error?: string | null
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           summary?: string | null
@@ -240,9 +203,7 @@ export type Database = {
           download_count?: number
           file_path?: string | null
           id?: string
-          likes_count?: number
           pages?: number | null
-          processing_error?: string | null
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           summary?: string | null
@@ -491,10 +452,6 @@ export type Database = {
       }
       is_admin: { Args: { _user_id?: string }; Returns: boolean }
       promote_user_to_admin: { Args: { p_user_id: string }; Returns: undefined }
-      toggle_material_like: {
-        Args: { p_material_id: string }
-        Returns: boolean
-      }
     }
     Enums: {
       app_role: "admin" | "lecturer" | "student"
