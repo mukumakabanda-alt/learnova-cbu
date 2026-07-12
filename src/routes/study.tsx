@@ -63,6 +63,17 @@ function StudyHub() {
               />
             </div>
 
+            {profile?.programme_code && (
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  {showAll ? "Showing every programme" : <>Curated for <span className="font-semibold text-copper">{profile.programme_code}</span></>}
+                </span>
+                <button onClick={() => setShowAll(!showAll)} className="rounded-full border border-border px-3 py-1 font-semibold text-foreground hover:bg-surface-muted">
+                  {showAll ? "Show my programme only" : "Show all programmes"}
+                </button>
+              </div>
+            )}
+
             <div className="mt-4 grid gap-3">
               {isLoading ? (
                 <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
