@@ -88,7 +88,7 @@ export function StudyPanel({
           type: material.type,
           course_code: material.course_code,
           courseTitle: material.courses?.title,
-        }) ?? [material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title
+        }) ?? ([material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title)
       : null;
   const recommendedVideos = useYoutubeRecommendations(videoQuery);
 
