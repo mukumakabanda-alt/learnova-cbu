@@ -12,6 +12,28 @@ type MaterialType = (typeof MATERIAL_TYPES)[number];
 
 const STAGES = ["Reading document…", "Uploading…", "Generating summary, flashcards & quiz…", "Adding to catalogue…"];
 
+function safeDbText(value: unknown, fallback = ""): string {
+  return String(value ?? fallback)
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\uD800-\uDFFF]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function safeFileName(name: string): string {
+  const cleaned = safeDbText(name, "document")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/[._-]{2,}/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 160)
+    .trim();
+  return cleaned || "document";
+}
+
 // Supabase's Postgrest/Storage errors are real Error instances in this
 // project's SDK version, but this handles any thrown value defensively —
 // a plain object with a `.message` (or a raw string) still surfaces its
@@ -98,7 +120,9 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // 2. Upload the raw file — always happens, regardless of how well
       // the text extraction went, so downloads always work.
       setStageIndex(1);
-      const path = `${user.id}/${crypto.randomUUID()}-${file.name}`;
+      const originalName = safeFileName(file.name);
+      const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
+      const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
       const { error: uploadError } = await supabase.storage.from("materials").upload(path, file);
       if (uploadError) throw uploadError;
 
@@ -120,22 +144,22 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
       if (quality !== "none") {
         try {
-          const result = LearnovaAI.processDocument(text, {
-            title: file.name.replace(/\.[a-z0-9]+$/i, ""),
+          const result = LearnovaAI.processDocument(safeDbText(text), {
+            title,
             contentYear: validYear,
             courseCode: courseCode ?? null,
             type: finalType,
           });
-          summary = result.summary || null;
-          tags = result.tags;
-          flashcards = result.flashcards.map((f) => ({ question: f.question, answer: f.answer, position: f.position }));
+          summary = safeDbText(result.summary) || null;
+          tags = result.tags.map((tag) => safeDbText(tag)).filter(Boolean).slice(0, 10);
+          flashcards = result.flashcards.map((f) => ({ question: safeDbText(f.question), answer: safeDbText(f.answer), position: f.position })).filter((f) => f.question && f.answer);
           quiz = result.quiz.map((q) => ({
-            question: q.question,
-            options: q.options,
-            correctIndex: q.correctIndex,
-            explanation: q.explanation,
+            question: safeDbText(q.question),
+            options: q.options.map((option) => safeDbText(option)).filter(Boolean).slice(0, 4),
+            correctIndex: Math.max(0, Math.min(q.options.length - 1, Number.isInteger(q.correctIndex) ? q.correctIndex : 0)),
+            explanation: safeDbText(q.explanation),
             position: q.position,
-          }));
+          })).filter((q) => q.question && q.options.length >= 2);
         } catch (e) {
           // The engine is designed to degrade gracefully on its own and
           // this shouldn't normally throw, but if it somehow does, the
@@ -151,7 +175,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
-          title: file.name.replace(/\.[a-z0-9]+$/i, ""),
+          title,
           course_code: courseCode ?? null,
           type: finalType,
           content_year: validYear,

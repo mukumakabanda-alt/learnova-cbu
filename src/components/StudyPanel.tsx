@@ -10,7 +10,7 @@ import {
   useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike, type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOffline, getOfflineMaterial, useOnlineStatus } from "@/lib/offline";
+import { saveMaterialOffline, getOfflineMaterial, removeOfflineMaterial, useOnlineStatus } from "@/lib/offline";
 import { forceDownload } from "@/lib/document-files";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
@@ -119,6 +119,19 @@ export function StudyPanel({
     } catch {
       // Offline storage isn't available in this browser — quietly no-op,
       // the button just won't flip to "saved."
+    } finally {
+      setSavingOffline(false);
+    }
+  }
+
+  async function handleRemoveOffline() {
+    setSavingOffline(true);
+    try {
+      await removeOfflineMaterial(material.id);
+      setOfflineSaved(false);
+      toast.success("Removed from offline storage.");
+    } catch {
+      toast.error("Couldn't remove the offline copy right now.");
     } finally {
       setSavingOffline(false);
     }
@@ -243,14 +256,15 @@ export function StudyPanel({
           {material.likes_count > 0 ? material.likes_count : "Like"}
         </button>
         <button
-          onClick={handleSaveOffline}
-          disabled={offlineSaved || savingOffline}
+          onClick={offlineSaved ? handleRemoveOffline : handleSaveOffline}
+          disabled={savingOffline}
           className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-default ${
             offlineSaved ? "border-teal/40 bg-teal/10 text-teal" : "border-border bg-surface text-foreground hover:bg-muted"
           }`}
+          title={offlineSaved ? "Remove the offline copy from this device" : "Save this material for offline study"}
         >
           {savingOffline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : offlineSaved ? <Check className="h-3.5 w-3.5" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
-          {offlineSaved ? "Available offline" : "Save for offline"}
+          {offlineSaved ? "Remove offline" : "Save for offline"}
         </button>
         {!isOnline && (
           <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">

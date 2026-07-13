@@ -48,9 +48,42 @@ type PipelineResult = {
   detected_year: number | null;
 };
 
+function safeDbText(value: unknown, fallback = ""): string {
+  return String(value ?? fallback)
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\uD800-\uDFFF]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function normalizeResult(result: PipelineResult): PipelineResult {
+  return {
+    summary: safeDbText(result.summary),
+    flashcards: result.flashcards
+      .map((card) => ({ question: safeDbText(card.question), answer: safeDbText(card.answer) }))
+      .filter((card) => card.question && card.answer)
+      .slice(0, 20),
+    quiz: result.quiz
+      .map((question) => ({
+        question: safeDbText(question.question),
+        options: question.options.map((option) => safeDbText(option)).filter(Boolean).slice(0, 4),
+        correct_index: Number.isInteger(question.correct_index) ? Math.max(0, Math.min(3, question.correct_index)) : 0,
+        explanation: safeDbText(question.explanation),
+      }))
+      .filter((question) => question.question && question.options.length >= 2)
+      .slice(0, 12),
+    tags: result.tags.map((tag) => safeDbText(tag)).filter(Boolean).slice(0, 8),
+    detected_year: result.detected_year,
+  };
+}
+
 function buildPrompt(text: string, title: string, materialType: string) {
   const isPastPaper = materialType.toLowerCase() === "past paper";
-  return `You are building study material for a university student from a document titled "${title}" (catalogued as: ${materialType}).
+  const safeTitle = safeDbText(title, "this document");
+  const safeMaterialType = safeDbText(materialType, "Notes");
+  const safeText = safeDbText(text);
+  return `You are building study material for a university student from a document titled "${safeTitle}" (catalogued as: ${safeMaterialType}).
 
 Return ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
 {
@@ -65,7 +98,7 @@ Base everything only on the document text below. If the text is fragments or low
 
 DOCUMENT TEXT:
 """
-${text.slice(0, MAX_INPUT_CHARS)}
+${safeText.slice(0, MAX_INPUT_CHARS)}
 """`;
 }
 
@@ -91,7 +124,7 @@ function extractJson(raw: string): PipelineResult {
     typeof parsed.detected_year === "number" && parsed.detected_year >= 1990 && parsed.detected_year <= 2100
       ? Math.round(parsed.detected_year)
       : null;
-  return { ...parsed, tags, detected_year: detectedYear };
+  return normalizeResult({ ...parsed, tags, detected_year: detectedYear });
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -140,8 +173,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     materialId = body.materialId;
-    const text: string = body.text ?? "";
-    const title: string = body.title ?? "this document";
+    const text: string = safeDbText(body.text ?? "");
+    const title: string = safeDbText(body.title ?? "this document", "this document");
 
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
@@ -260,7 +293,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: true });
   } catch (error) {
     console.error(error);
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = safeDbText(error instanceof Error ? error.message : "Unknown error", "Unknown error");
     if (materialId) {
       // Written even though `admin` requires supabaseUrl/serviceRoleKey to
       // exist — both are guaranteed by this point, since we return early
