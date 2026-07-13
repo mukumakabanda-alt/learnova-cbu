@@ -45,6 +45,14 @@ function extOf(name: string): string {
 
 function cleanWhitespace(s: string): string {
   return s
+    // Postgres JSON/text cannot store the null character. OCR, scraped
+    // binary Office files, and malformed PDFs can produce it (or other
+    // invisible control bytes), which surfaces in the upload UI as the
+    // exact database error "unsupported Unicode escape sequence". Strip
+    // those at the extraction boundary so every downstream insert is safe.
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\uD800-\uDFFF]/g, "")
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")

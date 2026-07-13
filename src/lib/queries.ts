@@ -17,7 +17,7 @@ type HeroSlideRow = Database["public"]["Tables"]["hero_slides"]["Row"];
 
 export type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
 export type MaterialWithCourse = MaterialRow & {
-  courses: { title: string; code: string } | null;
+  courses: { title: string; code: string; programme_code?: string | null } | null;
   uploader?: { full_name: string } | null;
 };
 type RequestWithCourse = RequestRow & { courses: { title: string } | null };
@@ -176,15 +176,15 @@ export type UniversalSearchResults = {
   programmes: ProgrammeRow[];
 };
 
-export function useUniversalSearch(query: string) {
+export function useUniversalSearch(query: string, programmeCode?: string | null) {
   return useQuery({
-    queryKey: ["universal-search", query],
+    queryKey: ["universal-search", query, programmeCode ?? null],
     queryFn: async (): Promise<UniversalSearchResults> => {
       const [coursesRes, materialsRes, programmesRes] = await Promise.all([
         supabase.from("courses").select("*, programmes(name, school)").order("code"),
         supabase
           .from("materials")
-          .select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+          .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
           .in("status", ["ready", "processing", "catalog_only"])
           .order("created_at", { ascending: false }),
         supabase.from("programmes").select("*").neq("code", "ADMIN").order("name"),
@@ -193,8 +193,8 @@ export function useUniversalSearch(query: string) {
       if (materialsRes.error) throw materialsRes.error;
       if (programmesRes.error) throw programmesRes.error;
 
-      const allCourses = (coursesRes.data ?? []) as CourseWithProgramme[];
-      const allMaterials = (materialsRes.data ?? []) as MaterialWithCourse[];
+      const allCourses = ((coursesRes.data ?? []) as CourseWithProgramme[]).filter((c) => !programmeCode || c.programme_code === programmeCode);
+      const allMaterials = ((materialsRes.data ?? []) as MaterialWithCourse[]).filter((m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode);
       const allProgrammes = (programmesRes.data ?? []) as ProgrammeRow[];
 
       const needle = query.trim().toLowerCase();
@@ -249,21 +249,19 @@ export function useCatalog(search?: string, programmeCode?: string | null) {
   return useQuery({
     queryKey: ["catalog", search, programmeCode ?? null],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
-      // When programmeCode is set we inner-join courses and filter on it so
-      // students only see material that actually belongs to their programme
-      // (plus general uploads with no course attached). Without it we return
-      // everything, same as before.
-      const relation = programmeCode ? "courses!inner(title, code, programme_code)" : "courses(title, code)";
+      // Fetch once, then apply the programme rule in plain TypeScript:
+      // show material from the student's programme plus General uploads
+      // with no course. A PostgREST inner join hid General materials, which
+      // made valid uploads look like they had disappeared.
       let q = supabase
         .from("materials")
-        .select(`*, ${relation}, uploader:profiles!materials_uploaded_by_profile_fkey(full_name)`)
+        .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
-      if (programmeCode) q = q.eq("courses.programme_code", programmeCode);
       if (search?.trim()) q = q.ilike("title", `%${search}%`);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as MaterialWithCourse[];
+      return ((data ?? []) as MaterialWithCourse[]).filter((m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode);
     },
   });
 }
@@ -273,7 +271,7 @@ export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)").eq("id", id).maybeSingle();
+      const { data, error } = await supabase.from("materials").select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)").eq("id", id).maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },
