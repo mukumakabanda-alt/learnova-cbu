@@ -65,13 +65,14 @@ function Auth() {
       setError("Fill in your name, student number, programme, and a password (at least 6 characters).");
       return;
     }
+    const selectedProgramme = (programmes ?? []).find((programme) => programme.code === programmeCode);
     setSubmitting(true);
     const { error } = await signUp({
       email: studentEmail(studentNumber),
       password,
       fullName: fullName.trim(),
       studentNumber: studentNumber.trim(),
-      school: "",
+      school: selectedProgramme?.school ?? "",
       programmeCode,
       year,
     });

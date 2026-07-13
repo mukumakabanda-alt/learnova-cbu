@@ -23,7 +23,11 @@ function safeDbText(value: unknown, fallback = ""): string {
 
 function safeFileName(name: string): string {
   const cleaned = safeDbText(name, "document")
-    .replace(/[\\/:*?"<>|#%{}^~`\[\]]/g, "-")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/[._-]{2,}/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
     .replace(/-+/g, "-")
     .slice(0, 160)
     .trim();
@@ -152,7 +156,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           quiz = result.quiz.map((q) => ({
             question: safeDbText(q.question),
             options: q.options.map((option) => safeDbText(option)).filter(Boolean).slice(0, 4),
-            correctIndex: q.correctIndex,
+            correctIndex: Math.max(0, Math.min(q.options.length - 1, Number.isInteger(q.correctIndex) ? q.correctIndex : 0)),
             explanation: safeDbText(q.explanation),
             position: q.position,
           })).filter((q) => q.question && q.options.length >= 2);
