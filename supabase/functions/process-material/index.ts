@@ -173,8 +173,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     materialId = body.materialId;
-    const text: string = body.text ?? "";
-    const title: string = body.title ?? "this document";
+    const text: string = safeDbText(body.text ?? "");
+    const title: string = safeDbText(body.title ?? "this document", "this document");
 
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
@@ -293,7 +293,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: true });
   } catch (error) {
     console.error(error);
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = safeDbText(error instanceof Error ? error.message : "Unknown error", "Unknown error");
     if (materialId) {
       // Written even though `admin` requires supabaseUrl/serviceRoleKey to
       // exist — both are guaranteed by this point, since we return early
