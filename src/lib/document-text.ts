@@ -36,6 +36,19 @@ const MAX_ZIP_DEPTH = 2;
 // of scanned notes) and is far better than nothing.
 const MAX_OCR_UNITS = 20;
 
+// Tesseract.js fetches its OCR core (WASM) + English language data — a
+// combined ~15-20MB — from a third-party CDN at runtime; this project
+// doesn't self-host those assets. On a slow or flaky connection (very
+// plausible for scanned/photographed notes on mobile data), that fetch
+// had no bound at all: it could simply hang forever, leaving the upload
+// UI stuck on "Loading OCR engine…" with no error and no way out. That's
+// indistinguishable from "the AI system just does nothing." These two
+// timeouts turn an unbounded hang into a bounded one that resolves to
+// quality: "none" (raw file still uploads, just without auto-generated
+// study tools) via the existing catch-all in extractDocumentText below.
+const OCR_INIT_TIMEOUT_MS = 45_000;
+const OCR_PAGE_TIMEOUT_MS = 30_000;
+
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "tif", "heic", "heif"];
 
 function extOf(name: string): string {
@@ -64,6 +77,26 @@ function qualityOf(text: string): ExtractedDocument["quality"] {
   if (len >= 200) return "good";
   if (len >= 20) return "partial";
   return "none";
+}
+
+// Races any promise against a bounded timeout — used around the
+// network-dependent steps (OCR engine + language download, and each
+// page's OCR pass) that have no natural upper bound of their own. See
+// the comment on OCR_INIT_TIMEOUT_MS above for why this exists.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 // Last-resort fallback for formats we can't truly parse — legacy binary
@@ -128,17 +161,21 @@ function humanizeOcrStatus(ctx: OcrCtx, status: string | undefined): string {
 
 async function getOcrWorker(ctx: OcrCtx) {
   if (!ctx.worker) {
-    ctx.worker = (async () => {
-      const mod: any = await import("tesseract.js");
-      const createWorker = mod.createWorker ?? mod.default?.createWorker;
-      return createWorker("eng", 1, {
-        logger: (m: any) => {
-          if (ctx.onProgress) {
-            ctx.onProgress({ stage: humanizeOcrStatus(ctx, m?.status), progress: typeof m?.progress === "number" ? m.progress : 0 });
-          }
-        },
-      });
-    })();
+    ctx.worker = withTimeout(
+      (async () => {
+        const mod: any = await import("tesseract.js");
+        const createWorker = mod.createWorker ?? mod.default?.createWorker;
+        return createWorker("eng", 1, {
+          logger: (m: any) => {
+            if (ctx.onProgress) {
+              ctx.onProgress({ stage: humanizeOcrStatus(ctx, m?.status), progress: typeof m?.progress === "number" ? m.progress : 0 });
+            }
+          },
+        });
+      })(),
+      OCR_INIT_TIMEOUT_MS,
+      "Loading the OCR engine",
+    );
   }
   return ctx.worker;
 }
@@ -210,7 +247,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
     ctx.label = `page ${i} of ${pageCount}`;
     ctx.onProgress?.({ stage: `Reading ${ctx.label}…`, progress: (i - 1) / pageCount });
     const canvas = await renderPdfPageToCanvas(pdf, i);
-    const { data } = await worker.recognize(canvas);
+    const { data } = await withTimeout(worker.recognize(canvas), OCR_PAGE_TIMEOUT_MS, `Reading page ${i}`);
     ocrText += (data?.text ?? "") + "\n\n";
     ctx.budget.remaining--;
   }
@@ -228,7 +265,7 @@ async function extractImage(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDo
   ctx.label = "the image";
   ctx.onProgress?.({ stage: "Reading the image…", progress: 0 });
   const worker = await getOcrWorker(ctx);
-  const { data } = await worker.recognize(file);
+  const { data } = await withTimeout(worker.recognize(file), OCR_PAGE_TIMEOUT_MS, "Reading the image");
   ctx.budget.remaining--;
   const text = cleanWhitespace(data?.text ?? "");
   return { text, pages: null, quality: qualityOf(text) };
@@ -450,4 +487,4 @@ export function guessMaterialType(filename: string, textSample?: string): Guessa
     if (haystacks.some((h) => h && patterns.some((p) => p.test(h)))) return type;
   }
   return "Notes";
-}
+             }
