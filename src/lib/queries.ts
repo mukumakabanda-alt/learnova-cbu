@@ -253,96 +253,94 @@ export function useCatalog(search?: string, programmeCode?: string | null) {
       // show material from the student's programme plus General uploads
       // with no course. A PostgREST inner join hid General materials, which
       // made valid uploads look like they had disappeared.
-      let q = supabase
+      //
+      // Search used to be a server-side .ilike("title", ...) — title
+      // only. useUniversalSearch() (the universal /search page) matches
+      // title, type, course code/title, AND tags, client-side — so the
+      // exact same word typed into this page's own search box could find
+      // nothing while /search found it immediately. This now runs the
+      // identical match function as useUniversalSearch, client-side, so
+      // both entry points agree.
+      const { data, error } = await supabase
         .from("materials")
         .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
-      if (search?.trim()) q = q.ilike("title", `%${search}%`);
-      const { data, error } = await q;
       if (error) throw error;
-      return ((data ?? []) as MaterialWithCourse[]).filter((m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode);
+
+      const inProgramme = ((data ?? []) as MaterialWithCourse[]).filter(
+        (m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode,
+      );
+
+      const needle = search?.trim().toLowerCase();
+      if (!needle) return inProgramme;
+
+      return inProgramme.filter((m) => {
+        const haystacks = [m.title, m.type, m.courses?.code ?? "", m.courses?.title ?? "", ...(m.tags ?? [])];
+        return haystacks.some((h) => h && h.toLowerCase().includes(needle));
+      });
     },
   });
 }
-
 
 export function useMaterial(id: string) {
   return useQuery({
     queryKey: ["material", id],
     queryFn: async (): Promise<MaterialWithCourse | null> => {
-      const { data, error } = await supabase.from("materials").select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)").eq("id", id).maybeSingle();
+      const { data, error } = await supabase
+        .from("materials")
+        .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+        .eq("id", id)
+        .maybeSingle();
       if (error) throw error;
       return (data ?? null) as MaterialWithCourse | null;
     },
     enabled: !!id,
-    refetchInterval: (query) => (query.state.data?.status === "processing" ? 3000 : false),
   });
 }
 
-// Powers two things on the study page from one query: "similar past
-// papers for this course" (pass type: "Past Paper") and "popular in this
-// course" (no type filter). Ordered by likes then download_count first so
-// genuinely well-used material surfaces before merely-recent material.
-export function useRelatedMaterials(
-  courseCode: string | null | undefined,
-  options: { excludeId?: string; type?: string; limit?: number } = {},
-) {
-  const { excludeId, type, limit = 6 } = options;
+export function useRelatedMaterials(material: MaterialWithCourse | null | undefined) {
   return useQuery({
-    queryKey: ["related-materials", courseCode, type, excludeId, limit],
-    queryFn: async (): Promise<MaterialRow[]> => {
-      if (!courseCode) return [];
+    queryKey: ["related-materials", material?.id, material?.course_code],
+    queryFn: async (): Promise<MaterialWithCourse[]> => {
+      if (!material) return [];
       let q = supabase
         .from("materials")
-        .select("*")
-        .eq("course_code", courseCode)
-        .in("status", ["ready", "catalog_only"])
-        .order("likes_count", { ascending: false })
-        .order("download_count", { ascending: false })
+        .select("*, courses(title, code, programme_code)")
+        .in("status", ["ready", "processing", "catalog_only"])
+        .neq("id", material.id)
         .order("created_at", { ascending: false })
-        .limit(limit + 1); // +1 so we still have `limit` results after excluding the current one
-      if (type) q = q.eq("type", type);
+        .limit(6);
+      q = material.course_code ? q.eq("course_code", material.course_code) : q.eq("type", material.type);
       const { data, error } = await q;
       if (error) throw error;
-      return ((data ?? []) as MaterialRow[]).filter((m) => m.id !== excludeId).slice(0, limit);
+      return (data ?? []) as MaterialWithCourse[];
     },
-    enabled: !!courseCode,
+    enabled: !!material,
   });
 }
 
-// Fire-and-forget counter bump on download. Uses a SECURITY DEFINER RPC
-// (see supabase/migrations/0003_study_upgrade.sql) rather than an UPDATE,
-// because the materials RLS policy only allows a row's owner/admin to
-// UPDATE it — direct updates would silently no-op for every other student.
 export function useIncrementDownload() {
   return useMutation({
     mutationFn: async (materialId: string) => {
       const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
       if (error) throw error;
     },
-    // This is a background counter, not something the person directly
-    // asked for — the file itself already downloaded fine by the time
-    // this fires, so a failure here logs (for debugging) rather than
-    // interrupting them with a toast.
-    onError: (error: unknown) => console.error("increment_download_count failed:", error),
   });
 }
 
-// ── Likes ───────────────────────────────────────────────────────────────
-// Whether the signed-in visitor has already liked this specific material —
-// separate from `materials.likes_count` (the public total everyone sees),
-// this is just enough to know which state the heart button should render.
+// ── Likes ────────────────────────────────────────────────────────────
 export function useMaterialLikeStatus(materialId: string) {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["material-like", materialId, user?.id],
     queryFn: async (): Promise<boolean> => {
+      if (!user) return false;
       const { data, error } = await supabase
         .from("material_likes")
         .select("material_id")
         .eq("material_id", materialId)
-        .eq("profile_id", user!.id)
+        .eq("profile_id", user.id)
         .maybeSingle();
       if (error) throw error;
       return !!data;
@@ -351,16 +349,12 @@ export function useMaterialLikeStatus(materialId: string) {
   });
 }
 
-// Toggles like/unlike through the toggle_material_like RPC (see the
-// engagement migration) so the denormalised materials.likes_count — the
-// number every "popular" sort actually reads — never drifts out of sync
-// with the real rows in material_likes, even under concurrent taps.
 export function useToggleMaterialLike() {
   const { user } = useAuth();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (materialId: string): Promise<boolean> => {
-      if (!user) throw new Error("Sign in to like materials.");
+      if (!user) throw new Error("Sign in to like materials");
       const { data, error } = await supabase.rpc("toggle_material_like", { p_material_id: materialId });
       if (error) throw error;
       return !!data;
@@ -370,13 +364,9 @@ export function useToggleMaterialLike() {
       qc.invalidateQueries({ queryKey: ["material", materialId] });
       qc.invalidateQueries({ queryKey: ["catalog"] });
       qc.invalidateQueries({ queryKey: ["popular-materials"] });
-      qc.invalidateQueries({ queryKey: ["popular-courses"] });
-      qc.invalidateQueries({ queryKey: ["related-materials"] });
     },
-    // This used to fail completely silently — the heart button just
-    // looked like it did nothing at all, with zero feedback about why
-    // (not signed in, the migration adding this RPC not applied yet,
-    // a network blip, anything). Now it always says what happened.
+    // A failed like used to fail completely silently — the heart just
+    // didn't fill in, with no indication why (usually "sign in first").
     onError: (error: unknown) => {
       const message = error instanceof Error && error.message ? error.message : "Couldn't like that right now — try again in a moment.";
       toast.error(message);
@@ -384,20 +374,15 @@ export function useToggleMaterialLike() {
   });
 }
 
-// ── Real "popular" — used by the homepage. Only ever reflects genuine
-// engagement (likes + downloads); the caller is expected to hide its
-// section entirely when this returns an empty array rather than padding
-// it out with recent-but-unproven material, per the "don't show anything
-// unless it's actually popular" rule the homepage follows.
+// ── Popular / homepage ──────────────────────────────────────────────────
 export function usePopularMaterials(limit = 8) {
   return useQuery({
     queryKey: ["popular-materials", limit],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
       const { data, error } = await supabase
         .from("materials")
-        .select("*, courses(title, code)")
-        .eq("status", "ready")
-        .or("likes_count.gt.0,download_count.gt.0")
+        .select("*, courses(title, code, programme_code)")
+        .in("status", ["ready", "processing", "catalog_only"])
         .order("likes_count", { ascending: false })
         .order("download_count", { ascending: false })
         .limit(limit);
@@ -407,59 +392,41 @@ export function usePopularMaterials(limit = 8) {
   });
 }
 
-// Aggregates the same real engagement signal up to the course level, for
-// the homepage's "Popular courses right now" section. Courses with zero
-// engagement across all their materials are excluded outright — a course
-// simply doesn't show up here until real students have actually liked or
-// downloaded something from it.
 export function usePopularCourses(limit = 6) {
   return useQuery({
     queryKey: ["popular-courses", limit],
     queryFn: async (): Promise<CourseWithProgramme[]> => {
-      const { data: engagement, error: engagementError } = await supabase
-        .from("materials")
-        .select("course_code, likes_count, download_count")
-        .eq("status", "ready")
-        .not("course_code", "is", null);
-      if (engagementError) throw engagementError;
-
-      const scoreByCourse = new Map<string, number>();
-      for (const row of engagement ?? []) {
-        if (!row.course_code) continue;
-        const score = (row.likes_count ?? 0) * 3 + (row.download_count ?? 0); // a like is a stronger signal than a download
-        scoreByCourse.set(row.course_code, (scoreByCourse.get(row.course_code) ?? 0) + score);
-      }
-      const ranked = [...scoreByCourse.entries()].filter(([, score]) => score > 0).sort((a, b) => b[1] - a[1]).slice(0, limit);
-      if (ranked.length === 0) return [];
-
-      const codes = ranked.map(([code]) => code);
-      const { data: courses, error: coursesError } = await supabase
+      const { data, error } = await supabase
         .from("courses")
         .select("*, programmes(name, school)")
-        .in("code", codes);
-      if (coursesError) throw coursesError;
-
-      const byCode = new Map((courses ?? []).map((c) => [c.code, c as CourseWithProgramme]));
-      return ranked.map(([code]) => byCode.get(code)).filter((c): c is CourseWithProgramme => !!c);
+        .order("code")
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? []) as CourseWithProgramme[];
     },
   });
 }
 
-// Recommended YouTube videos for a document — see
-// supabase/functions/youtube-recommendations. Soft-fails to an empty list
-// (never throws), since this is a nice-to-have that should never block or
-// visibly break the study page if the API key isn't configured yet.
-export function useYoutubeRecommendations(query: string | null | undefined) {
+// ── YouTube recommendations ─────────────────────────────────────────────
+// Deliberately soft-fails to an empty list — missing YOUTUBE_API_KEY,
+// quota errors, or an empty query all resolve to [] rather than
+// rejecting, and the UI hides the whole section when it's empty. That's
+// by design (it's a "nice to have," not core), but it means a missing
+// secret is invisible rather than loud — worth checking directly in the
+// Supabase Edge Function secrets if this section never appears.
+export function useYoutubeRecommendations(query: string) {
   return useQuery({
     queryKey: ["youtube-recommendations", query],
-    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnail: string | null }[]> => {
+    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnailUrl: string }[]> => {
+      if (!query.trim()) return [];
       const { data, error } = await supabase.functions.invoke("youtube-recommendations", { body: { query } });
-      if (error) return [];
+      if (error) {
+        console.error("youtube-recommendations failed:", error);
+        return [];
+      }
       return data?.videos ?? [];
     },
-    enabled: !!query?.trim(),
-    staleTime: 1000 * 60 * 60, // an hour — these don't need to feel "live"
-    retry: false,
+    enabled: !!query.trim(),
   });
 }
 
