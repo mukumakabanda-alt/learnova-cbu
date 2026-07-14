@@ -49,11 +49,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(({ data }: { data: { session: any } }) => {
+    supabase.auth.getSession().then(async ({ data }: { data: { session: any } }) => {
       if (!active) return;
       setSession(data.session);
-      if (data.session?.user) loadProfile(data.session.user.id);
-      setLoading(false);
+      // Wait for the profile/roles fetch to actually finish before
+      // flipping `loading` to false. This used to call loadProfile()
+      // without awaiting it, so `loading` went false — and anything
+      // gated on it, like the Dashboard — as soon as the session check
+      // alone came back, before `profile` had actually loaded. Dashboard
+      // treats "no profile yet" identically to "signed out", so a
+      // genuinely signed-in user could load /dashboard and see the
+      // "Sign in to unlock your streak" screen instead of their real
+      // dashboard, worse the slower the connection. Awaiting here means
+      // `loading` now covers the whole picture, not just the session
+      // check.
+      if (data.session?.user) await loadProfile(data.session.user.id);
+      if (active) setLoading(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event: string, newSession: any) => {
