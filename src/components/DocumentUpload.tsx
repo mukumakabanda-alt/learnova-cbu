@@ -171,7 +171,15 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
       // 4. Catalogue it — one insert, already carrying the AI's results.
       setStageIndex(3);
-      const hasStudyTools = quality !== "none" && !!summary;
+      // Any ONE of summary/flashcards/quiz succeeding is enough to mark
+      // this "ready" — this used to require summary specifically
+      // (hasStudyTools = quality !== "none" && !!summary), which meant
+      // that if the summarizer alone came back empty, perfectly good
+      // flashcards and quiz questions that HAD been generated were
+      // thrown away too, and the whole material got filed as
+      // catalog_only. The three are independent outputs of the same
+      // run — one being weak or empty shouldn't discard the other two.
+      const hasAnyStudyTools = quality !== "none" && (!!summary || flashcards.length > 0 || quiz.length > 0);
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
@@ -181,7 +189,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           content_year: validYear,
           pages,
           file_path: path,
-          status: hasStudyTools ? "ready" : "catalog_only",
+          status: hasAnyStudyTools ? "ready" : "catalog_only",
           source: "student",
           uploaded_by: user.id,
           tags: tags.length ? tags : [],
@@ -193,11 +201,16 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         .single();
       if (insertError) throw insertError;
 
-      // 5. Save the flashcards & quiz alongside it. Best-effort: if
-      // either insert fails, the material itself is already safely
-      // saved above with its summary — it just opens to "no
-      // flashcards/quiz yet" instead of erroring the whole upload.
-      if (hasStudyTools) {
+      // 5. Save the flashcards & quiz alongside it — attempted whenever
+      // extraction produced usable text at all, independently of whether
+      // the summary specifically came out non-empty (see note above).
+      // Best-effort: if either insert fails, the material itself is
+      // already safely saved above — it just opens to "no flashcards/
+      // quiz yet" instead of erroring the whole upload. (If this is
+      // still failing after applying the new RLS migration, that's the
+      // thing to check first — this used to fail 100% of the time for
+      // every non-admin account.)
+      if (quality !== "none") {
         if (flashcards.length) {
           const { error: fcError } = await supabase
             .from("flashcards")
@@ -378,4 +391,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-}
+         }
