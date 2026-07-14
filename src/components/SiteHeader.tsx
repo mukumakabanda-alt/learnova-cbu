@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpen, LayoutDashboard, Search, Compass, ShieldCheck, User } from "lucide-react";
+import { BookOpen, LayoutDashboard, Search, Compass, ShieldCheck, User, Download } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import learnovaLogo from "@/assets/learnova-logo.png.asset.json";
 
@@ -54,6 +54,7 @@ export function MobileTabBar() {
     { to: "/", label: "Home", icon: BookOpen },
     { to: "/browse", label: "Browse", icon: Compass },
     { to: "/study", label: "Study", icon: LayoutDashboard },
+    { to: "/offline", label: "Offline", icon: Download },
     { to: "/dashboard", label: "You", icon: User },
     ...(isAdmin ? [{ to: "/admin", label: "Admin", icon: ShieldCheck }] : []),
   ];
@@ -103,6 +104,7 @@ export function SiteFooter() {
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
             <li><Link to="/browse" className="hover:text-foreground">Browse programmes</Link></li>
             <li><Link to="/study" className="hover:text-foreground">Study catalogue</Link></li>
+            <li><Link to="/offline" className="hover:text-foreground">Offline library</Link></li>
             <li><Link to="/dashboard" className="hover:text-foreground">My dashboard</Link></li>
           </ul>
         </div>
@@ -125,4 +127,4 @@ export function SiteFooter() {
       <div className="h-20" />
     </footer>
   );
-}
+    }
