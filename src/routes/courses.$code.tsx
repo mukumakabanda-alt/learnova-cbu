@@ -3,9 +3,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useCourse, useMaterialsForCourse, useToggleSaved, useSavedMaterials, useIncrementDownload } from "@/lib/queries";
 import { DocumentUpload } from "@/components/DocumentUpload";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Bookmark, Download, FileText } from "lucide-react";
+import { ArrowLeft, Bookmark, Download, Eye, FileText } from "lucide-react";
 import { forceDownload } from "@/lib/document-files";
 import { toast } from "sonner";
 
@@ -45,6 +46,11 @@ function CoursePage() {
   // mutation twice — without disabling every OTHER bookmark button on the
   // page while one save is in flight.
   const [pendingSaveIds, setPendingSaveIds] = useState<Set<string>>(new Set());
+
+  // Lets the row's own "View" button open the document right here,
+  // instead of the only option being to navigate to /study/$id first —
+  // same fix as the Study catalogue list.
+  const [viewerMaterial, setViewerMaterial] = useState<{ id: string; file_path: string | null; title: string } | null>(null);
 
   function handleToggleSaved(materialId: string, nextSaved: boolean) {
     if (pendingSaveIds.has(materialId)) return;
@@ -142,6 +148,15 @@ function CoursePage() {
                     <Bookmark className="h-4 w-4" />
                   </button>
                   {m.file_path && (
+                    <button
+                      onClick={() => setViewerMaterial({ id: m.id, file_path: m.file_path, title: m.title })}
+                      aria-label={`Preview ${m.title}`}
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  )}
+                  {m.file_path && (
                     <button onClick={() => downloadMaterial(m.file_path, m.id, m.title)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
                   )}
                 </div>
@@ -180,8 +195,16 @@ function CoursePage() {
         </aside>
       </div>
 
+      <DocumentViewer
+        open={!!viewerMaterial}
+        onClose={() => setViewerMaterial(null)}
+        materialId={viewerMaterial?.id ?? ""}
+        filePath={viewerMaterial?.file_path ?? null}
+        title={viewerMaterial?.title ?? ""}
+      />
+
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-                                             }
+    }
