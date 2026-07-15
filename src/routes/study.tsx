@@ -5,7 +5,7 @@ import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
-import { useCatalog } from "@/lib/queries";
+import { useCatalog, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { FileText, Loader2, Search, Eye } from "lucide-react";
 
@@ -42,8 +42,10 @@ function StudyHub() {
   // Lets a card's "View" button open the document right where you are,
   // instead of the only option being to navigate to /study/$id first and
   // then tap View again there. Previewing used to always be a two-tap
-  // journey from this list — this makes it one.
-  const [viewerMaterial, setViewerMaterial] = useState<{ id: string; file_path: string | null; title: string } | null>(null);
+  // journey from this list — this makes it one. Stores the full material
+  // (not just id/path/title) so DocumentViewer can also cache it for
+  // offline use on download — see DocumentViewer's `material` prop.
+  const [viewerMaterial, setViewerMaterial] = useState<MaterialWithCourse | null>(null);
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -104,7 +106,7 @@ function StudyHub() {
                     </Link>
                     {m.file_path && (
                       <button
-                        onClick={() => setViewerMaterial({ id: m.id, file_path: m.file_path, title: m.title })}
+                        onClick={() => setViewerMaterial(m)}
                         aria-label={`Preview ${m.title}`}
                         className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
                       >
@@ -137,10 +139,11 @@ function StudyHub() {
         materialId={viewerMaterial?.id ?? ""}
         filePath={viewerMaterial?.file_path ?? null}
         title={viewerMaterial?.title ?? ""}
+        material={viewerMaterial}
       />
 
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-                  }
+        }
