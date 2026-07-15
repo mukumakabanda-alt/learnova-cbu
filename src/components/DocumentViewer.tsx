@@ -13,9 +13,10 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion } from "lucide-react";
 import { toast } from "sonner";
-import { getViewUrl, forceDownload, previewKind } from "@/lib/document-files";
-import { useIncrementDownload, useSavedMaterials, useToggleSaved } from "@/lib/queries";
+import { getViewUrl, forceDownload, previewKind, previewKindFromMime, sniffContentType, type PreviewKind } from "@/lib/document-files";
+import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
+import { saveMaterialOfflineFromDownload } from "@/lib/offline";
 
 export function DocumentViewer({
   open,
@@ -23,12 +24,15 @@ export function DocumentViewer({
   materialId,
   filePath,
   title,
+  material = null,
 }: {
   open: boolean;
   onClose: () => void;
   materialId: string;
   filePath: string | null;
   title: string;
+  /** When provided, a successful download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. Optional so DocumentViewer still works for pure previewing without it. */
+  material?: MaterialWithCourse | null;
 }) {
   const { user } = useAuth();
   const incrementDownload = useIncrementDownload();
@@ -39,24 +43,33 @@ export function DocumentViewer({
   const [url, setUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [sniffedKind, setSniffedKind] = useState<PreviewKind | null>(null);
 
   // Fetches a fresh signed URL every time the viewer opens (rather than
   // reusing whatever the last one was), so a document reopened later in
   // the same session never hits an expired link. Note: this does NOT
   // bump download_count — opening a preview is a view, not a download.
-  // It used to increment here too, which meant every open of the viewer
-  // (including just glancing at a document) counted as a "download,"
-  // inflating that number well past anything real. Only handleDownload()
-  // below — the actual Download button — counts now.
+  //
+  // If the filename has no recognizable extension (previewKind() below
+  // returns "none" — common for files saved via WhatsApp on Android,
+  // which often strips it), this also asks Storage what Content-Type it
+  // actually recorded for the file and uses that instead, so an
+  // already-uploaded photo or PDF with no extension in its stored path
+  // still opens instead of always falling back to "download to open it."
   useEffect(() => {
     if (!open || !filePath) return;
     let active = true;
     setUrl(null);
     setLoadError(false);
+    setSniffedKind(null);
     getViewUrl(filePath)
-      .then((signed) => {
+      .then(async (signed) => {
         if (!active) return;
         setUrl(signed);
+        if (previewKind(filePath) === "none") {
+          const mime = await sniffContentType(signed);
+          if (active) setSniffedKind(previewKindFromMime(mime));
+        }
       })
       .catch(() => {
         if (active) setLoadError(true);
@@ -79,7 +92,9 @@ export function DocumentViewer({
 
   if (!open) return null;
 
-  const kind = filePath ? previewKind(filePath) : "none";
+  const extKind = filePath ? previewKind(filePath) : "none";
+  const stillSniffing = extKind === "none" && !!url && sniffedKind === null;
+  const kind: PreviewKind = extKind !== "none" ? extKind : (sniffedKind ?? "none");
 
   async function handleDownload() {
     if (!filePath) return;
@@ -87,6 +102,13 @@ export function DocumentViewer({
     try {
       await forceDownload(filePath, title);
       incrementDownload.mutate(materialId);
+      // Downloading and "Save for offline" used to be two completely
+      // separate actions with no relationship — someone could download a
+      // file and it would never show up in their Offline Library. If you
+      // bothered to download something, you almost certainly want it
+      // available offline too — this makes Download also do that,
+      // silently, in the background.
+      if (material) saveMaterialOfflineFromDownload(material);
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -150,7 +172,7 @@ export function DocumentViewer({
             <ViewerMessage icon={FileWarning} text="No file is attached to this material." />
           ) : loadError ? (
             <ViewerMessage icon={FileWarning} text="Couldn't open a preview right now — check your connection, or try downloading it instead." />
-          ) : !url ? (
+          ) : !url || stillSniffing ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
@@ -192,4 +214,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-      }
+        }
