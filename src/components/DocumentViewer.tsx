@@ -42,7 +42,12 @@ export function DocumentViewer({
 
   // Fetches a fresh signed URL every time the viewer opens (rather than
   // reusing whatever the last one was), so a document reopened later in
-  // the same session never hits an expired link.
+  // the same session never hits an expired link. Note: this does NOT
+  // bump download_count — opening a preview is a view, not a download.
+  // It used to increment here too, which meant every open of the viewer
+  // (including just glancing at a document) counted as a "download,"
+  // inflating that number well past anything real. Only handleDownload()
+  // below — the actual Download button — counts now.
   useEffect(() => {
     if (!open || !filePath) return;
     let active = true;
@@ -52,7 +57,6 @@ export function DocumentViewer({
       .then((signed) => {
         if (!active) return;
         setUrl(signed);
-        incrementDownload.mutate(materialId);
       })
       .catch(() => {
         if (active) setLoadError(true);
@@ -188,4 +192,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-            }
+      }
