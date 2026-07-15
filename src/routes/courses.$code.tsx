@@ -8,7 +8,11 @@ import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Bookmark, Download, Eye, FileText } from "lucide-react";
 import { forceDownload } from "@/lib/document-files";
+import { saveMaterialOfflineFromDownload } from "@/lib/offline";
 import { toast } from "sonner";
+import type { Database } from "@/integrations/supabase/types";
+
+type MaterialRow = Database["public"]["Tables"]["materials"]["Row"];
 
 export const Route = createFileRoute("/courses/$code")({
   head: ({ params }) => ({
@@ -50,7 +54,7 @@ function CoursePage() {
   // Lets the row's own "View" button open the document right here,
   // instead of the only option being to navigate to /study/$id first —
   // same fix as the Study catalogue list.
-  const [viewerMaterial, setViewerMaterial] = useState<{ id: string; file_path: string | null; title: string } | null>(null);
+  const [viewerMaterial, setViewerMaterial] = useState<MaterialRow | null>(null);
 
   function handleToggleSaved(materialId: string, nextSaved: boolean) {
     if (pendingSaveIds.has(materialId)) return;
@@ -88,13 +92,20 @@ function CoursePage() {
   // src/lib/document-files.ts). Now uses the same shared, working
   // download path as the study page and document viewer, so it behaves
   // identically everywhere: an hour-long signed URL, a real forced
-  // save-to-device download via a blob: URL, and a visible error instead
-  // of failing silently.
-  async function downloadMaterial(filePath: string | null, materialId: string, title: string) {
-    if (!filePath) return;
+  // save-to-device download via a blob: URL, a visible error instead of
+  // failing silently, and — same fix as everywhere else this round — it
+  // also caches the material for offline use (this list doesn't come
+  // with the `courses` join useCatalog's does, so it's built manually
+  // from the course already loaded on this page).
+  async function downloadMaterial(m: MaterialRow) {
+    if (!m.file_path) return;
     try {
-      await forceDownload(filePath, title);
-      incrementDownload.mutate(materialId);
+      await forceDownload(m.file_path, m.title);
+      incrementDownload.mutate(m.id);
+      saveMaterialOfflineFromDownload({
+        ...m,
+        courses: { title: course.title, code: course.code, programme_code: course.programme_code },
+      }).catch(() => {});
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     }
@@ -149,7 +160,7 @@ function CoursePage() {
                   </button>
                   {m.file_path && (
                     <button
-                      onClick={() => setViewerMaterial({ id: m.id, file_path: m.file_path, title: m.title })}
+                      onClick={() => setViewerMaterial(m)}
                       aria-label={`Preview ${m.title}`}
                       className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
                     >
@@ -157,7 +168,7 @@ function CoursePage() {
                     </button>
                   )}
                   {m.file_path && (
-                    <button onClick={() => downloadMaterial(m.file_path, m.id, m.title)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => downloadMaterial(m)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
                   )}
                 </div>
               );
@@ -201,10 +212,15 @@ function CoursePage() {
         materialId={viewerMaterial?.id ?? ""}
         filePath={viewerMaterial?.file_path ?? null}
         title={viewerMaterial?.title ?? ""}
+        material={
+          viewerMaterial
+            ? { ...viewerMaterial, courses: { title: course.title, code: course.code, programme_code: course.programme_code } }
+            : null
+        }
       />
 
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-    }
+}
