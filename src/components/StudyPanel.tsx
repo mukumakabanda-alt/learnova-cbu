@@ -116,9 +116,15 @@ export function StudyPanel({
         quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
       });
       setOfflineSaved(true);
-    } catch {
-      // Offline storage isn't available in this browser — quietly no-op,
-      // the button just won't flip to "saved."
+      toast.success("Saved for offline — it'll open with zero signal from here on.");
+    } catch (e) {
+      // This used to fail completely silently — the button just wouldn't
+      // flip to "saved," with zero indication why (private browsing,
+      // storage quota, IndexedDB disabled by the browser, anything).
+      // Same fix as handleRemoveOffline/handleDownload right below: say
+      // what happened instead of pretending nothing did.
+      console.error("Saving offline failed:", e);
+      toast.error("Couldn't save this for offline — this browser may be blocking local storage (private/incognito mode is the usual cause).");
     } finally {
       setSavingOffline(false);
     }
@@ -591,4 +597,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-}
+                                                }
