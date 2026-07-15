@@ -96,10 +96,9 @@ export function previewKind(filePath: string): PreviewKind {
 }
 
 // Fallback for previewKind() when the stored path has no recognizable
-// extension (see ensureFileExtension above — this covers files that were
-// already uploaded before that existed, like the "580085" one). Reads
-// the Content-Type Storage itself recorded for the file, via
-// sniffContentType() below, rather than giving up.
+// extension (see ensureFileExtension above). Used both for a live
+// Content-Type sniff (see sniffContentType below) and for a cached
+// offline blob's own .type — same function either way.
 export function previewKindFromMime(mime: string | null): PreviewKind {
   if (!mime) return "none";
   const type = mime.split(";")[0].trim().toLowerCase();
@@ -155,7 +154,31 @@ async function getDownloadUrl(filePath: string, filename: string): Promise<strin
   return data.signedUrl;
 }
 
-// Forces an actual save-to-device download (never an inline preview).
+// Fetches a material's file into memory as a Blob without triggering a
+// save-to-device download — used to cache the file for offline viewing
+// (see offline.ts) independently of whether the person has also tapped
+// the separate Download button. Returns null rather than throwing on
+// failure (unusually large file, connection dropped mid-fetch) — caching
+// the file for offline use is a bonus on top of the material's already-
+// saved metadata/summary/flashcards/quiz; it shouldn't block or fail
+// that.
+export async function fetchFileForOffline(filePath: string): Promise<{ blob: Blob; mime: string } | null> {
+  try {
+    const url = await getViewUrl(filePath);
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return { blob, mime: blob.type || response.headers.get("content-type") || "" };
+  } catch {
+    return null;
+  }
+}
+
+// Forces an actual save-to-device download (never an inline preview),
+// and returns the downloaded Blob so a caller can also cache it for
+// offline use (see saveMaterialOfflineFromDownload in offline.ts)
+// without fetching the same bytes twice — real bandwidth on mobile data
+// otherwise.
 //
 // This fetches the file into memory first and downloads from a same-
 // origin blob: URL, rather than pointing an anchor straight at the
@@ -169,7 +192,7 @@ async function getDownloadUrl(filePath: string, filename: string): Promise<strin
 // local) is what makes the save-to-device behaviour reliable everywhere
 // — this is what "I can't download" on a phone almost always turns out
 // to actually be.
-export async function forceDownload(filePath: string, fallbackTitle: string): Promise<void> {
+export async function forceDownload(filePath: string, fallbackTitle: string): Promise<Blob> {
   const filename = originalFileName(filePath, fallbackTitle);
   const url = await getDownloadUrl(filePath, filename);
 
@@ -191,4 +214,6 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
     // read the blob on some devices, so this waits a few seconds first.
     setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
   }
-    }
+
+  return blob;
+  }
