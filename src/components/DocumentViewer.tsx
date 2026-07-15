@@ -1,22 +1,22 @@
 // Full-screen in-website document viewer.
 //
-// Tapping a document used to either do nothing (a popup silently blocked
-// on mobile) or hand you off to the browser's own file handling, which
-// doesn't know how to show a Word/PowerPoint file at all. This renders a
-// preview right inside the site — PDFs and images natively, Office files
-// through Google's document viewer — with Save and Download sitting right
-// next to it, so someone can flip through a document before committing to
-// downloading it.
+// Renders a preview right inside the site — PDFs and images natively,
+// Office files through Google's document viewer — with Save and
+// Download right next to it. Online, it always prefers a fresh copy;
+// offline, or if the network request itself fails, it falls back to
+// whatever's cached in the Offline Library (see src/lib/offline.ts) —
+// so a downloaded document genuinely opens with zero signal, not just
+// its summary.
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion } from "lucide-react";
+import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion, Check, CloudOff } from "lucide-react";
 import { toast } from "sonner";
-import { getViewUrl, forceDownload, previewKind, previewKindFromMime, sniffContentType, type PreviewKind } from "@/lib/document-files";
+import { getViewUrl, forceDownload, previewKind, previewKindFromMime, type PreviewKind } from "@/lib/document-files";
 import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOfflineFromDownload } from "@/lib/offline";
+import { saveMaterialOfflineFromDownload, getOfflineFileUrl, touchLastOpened, useOfflineStatus } from "@/lib/offline";
 
 export function DocumentViewer({
   open,
@@ -31,7 +31,7 @@ export function DocumentViewer({
   materialId: string;
   filePath: string | null;
   title: string;
-  /** When provided, a successful download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. Optional so DocumentViewer still works for pure previewing without it. */
+  /** When provided, Download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. Optional so DocumentViewer still works for pure previewing without it. */
   material?: MaterialWithCourse | null;
 }) {
   const { user } = useAuth();
@@ -39,41 +39,60 @@ export function DocumentViewer({
   const { data: saved } = useSavedMaterials();
   const toggleSaved = useToggleSaved();
   const isSaved = (saved ?? []).some((s) => s.material_id === materialId);
+  const { downloaded } = useOfflineStatus(materialId);
 
   const [url, setUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [sniffedKind, setSniffedKind] = useState<PreviewKind | null>(null);
+  const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
 
-  // Fetches a fresh signed URL every time the viewer opens (rather than
-  // reusing whatever the last one was), so a document reopened later in
-  // the same session never hits an expired link. Note: this does NOT
-  // bump download_count — opening a preview is a view, not a download.
-  //
-  // If the filename has no recognizable extension (previewKind() below
-  // returns "none" — common for files saved via WhatsApp on Android,
-  // which often strips it), this also asks Storage what Content-Type it
-  // actually recorded for the file and uses that instead, so an
-  // already-uploaded photo or PDF with no extension in its stored path
-  // still opens instead of always falling back to "download to open it."
   useEffect(() => {
     if (!open || !filePath) return;
     let active = true;
     setUrl(null);
     setLoadError(false);
     setSniffedKind(null);
-    getViewUrl(filePath)
-      .then(async (signed) => {
+    setUsingOfflineCopy(false);
+
+    async function useOfflineCopy(): Promise<boolean> {
+      const cached = await getOfflineFileUrl(materialId);
+      if (!active || !cached) return false;
+      setUrl(cached.url);
+      setSniffedKind(previewKindFromMime(cached.mime));
+      setUsingOfflineCopy(true);
+      touchLastOpened(materialId);
+      return true;
+    }
+
+    async function load() {
+      // Genuinely offline: don't wait on a network request that's going
+      // to fail anyway — go straight to whatever's cached.
+      if (!navigator.onLine) {
+        const usedCache = await useOfflineCopy();
+        if (!usedCache && active) setLoadError(true);
+        return;
+      }
+      // Online: always prefer a fresh copy, but fall back to the cached
+      // one instead of a hard error if the request itself fails — a real
+      // scenario on unreliable mobile data, not just a "no signal" one.
+      try {
+        const signed = await getViewUrl(filePath);
         if (!active) return;
         setUrl(signed);
+        touchLastOpened(materialId);
         if (previewKind(filePath) === "none") {
+          const { sniffContentType } = await import("@/lib/document-files");
           const mime = await sniffContentType(signed);
           if (active) setSniffedKind(previewKindFromMime(mime));
         }
-      })
-      .catch(() => {
-        if (active) setLoadError(true);
-      });
+      } catch {
+        const usedCache = await useOfflineCopy();
+        if (!usedCache && active) setLoadError(true);
+      }
+    }
+
+    load();
     return () => {
       active = false;
     };
@@ -100,15 +119,12 @@ export function DocumentViewer({
     if (!filePath) return;
     setDownloading(true);
     try {
-      await forceDownload(filePath, title);
+      const blob = await forceDownload(filePath, title);
       incrementDownload.mutate(materialId);
-      // Downloading and "Save for offline" used to be two completely
-      // separate actions with no relationship — someone could download a
-      // file and it would never show up in their Offline Library. If you
-      // bothered to download something, you almost certainly want it
-      // available offline too — this makes Download also do that,
-      // silently, in the background.
-      if (material) saveMaterialOfflineFromDownload(material);
+      if (material) {
+        await saveMaterialOfflineFromDownload(material, { blob, mime: blob.type });
+        toast.success("Downloaded — also in your Library, opens with zero signal from here on.");
+      }
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -159,19 +175,34 @@ export function DocumentViewer({
           <button
             onClick={handleDownload}
             disabled={downloading || !filePath}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground transition-transform hover:scale-[1.02] active:scale-100 disabled:cursor-default disabled:opacity-50"
+            className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold transition-transform hover:scale-[1.02] active:scale-100 disabled:cursor-default disabled:opacity-50 ${
+              downloaded ? "bg-teal/10 text-teal" : "bg-primary text-primary-foreground"
+            }`}
           >
-            {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-            Download
+            {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : downloaded ? <Check className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+            {downloaded ? "Downloaded" : "Download"}
           </button>
         </div>
+
+        {usingOfflineCopy && (
+          <div className="flex items-center gap-1.5 bg-copper/10 px-4 py-1.5 text-[11px] font-medium text-copper">
+            <CloudOff className="h-3 w-3" /> Showing your offline copy
+          </div>
+        )}
 
         {/* Preview body */}
         <div className="relative flex-1 overflow-auto bg-surface-muted">
           {!filePath ? (
             <ViewerMessage icon={FileWarning} text="No file is attached to this material." />
           ) : loadError ? (
-            <ViewerMessage icon={FileWarning} text="Couldn't open a preview right now — check your connection, or try downloading it instead." />
+            <ViewerMessage
+              icon={FileWarning}
+              text={
+                navigator.onLine
+                  ? "Couldn't open a preview right now — check your connection, or try downloading it instead."
+                  : "You're offline and this document hasn't been downloaded yet — connect once and tap Download to make it available with zero signal."
+              }
+            />
           ) : !url || stillSniffing ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -183,16 +214,20 @@ export function DocumentViewer({
               <img src={url} alt={title} className="max-h-full max-w-full rounded-lg object-contain" />
             </div>
           ) : kind === "office" ? (
-            <>
-              <iframe
-                title={title}
-                src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
-                className="h-full w-full border-0"
-              />
-              <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/90 px-4 py-2 text-center text-[11px] text-muted-foreground">
-                This preview needs an internet connection to load. If it doesn't appear, download the file instead.
-              </p>
-            </>
+            usingOfflineCopy ? (
+              <ViewerMessage icon={FileQuestion} text="Office documents need an internet connection to preview, even from your offline copy — download it to open it on your device instead." />
+            ) : (
+              <>
+                <iframe
+                  title={title}
+                  src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
+                  className="h-full w-full border-0"
+                />
+                <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/90 px-4 py-2 text-center text-[11px] text-muted-foreground">
+                  This preview needs an internet connection to load. If it doesn't appear, download the file instead.
+                </p>
+              </>
+            )
           ) : kind === "text" ? (
             <iframe title={title} src={url} className="h-full w-full border-0 bg-white" />
           ) : (
@@ -214,4 +249,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-        }
+    }
