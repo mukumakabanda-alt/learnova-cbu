@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Upload, Loader2, CheckCircle2, FileWarning } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
+import { ensureFileExtension } from "@/lib/document-files";
 import { useAuth } from "@/hooks/use-auth";
 import { LearnovaAI } from "@/lib/learnova-ai";
 
@@ -190,7 +191,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // 2. Upload the raw file — always happens, regardless of how well
       // the text extraction went, so downloads always work.
       setStageIndex(1);
-      const originalName = safeFileName(file.name);
+      // ensureFileExtension() covers files (very often ones saved via
+      // WhatsApp on Android) whose name has no extension at all — without
+      // it the stored path has no dot in it anywhere, which broke the
+      // in-app preview entirely (previewKind() had nothing to detect) and
+      // left the downloaded copy unable to open correctly too.
+      const originalName = ensureFileExtension(safeFileName(file.name), file.type);
       const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
       const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
       const { error: uploadError } = await supabase.storage.from("materials").upload(path, file);
@@ -278,9 +284,8 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // already safely saved above — it just opens to "no flashcards/
       // quiz yet" instead of erroring the whole upload. (If this is
       // still failing, check that the flashcard/quiz RLS migration
-      // actually ran against your live database — see the SQL check at
-      // the top of this message. This used to fail 100% of the time for
-      // every non-admin account.)
+      // actually ran against your live database via Supabase's SQL
+      // Editor — see the top of this message.)
       if (quality !== "none") {
         if (flashcards.length) {
           const { error: fcError } = await supabase
@@ -462,4 +467,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-  }
+                  }
