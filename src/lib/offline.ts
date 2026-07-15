@@ -15,6 +15,7 @@
 import { useEffect, useState } from "react";
 import type { Database } from "@/integrations/supabase/types";
 import type { MaterialWithCourse } from "@/lib/queries";
+import { supabase } from "@/integrations/supabase/client";
 
 type FlashcardRow = Database["public"]["Tables"]["flashcards"]["Row"];
 type QuizRow = Database["public"]["Tables"]["quiz_questions"]["Row"];
@@ -65,6 +66,26 @@ export async function saveMaterialOffline(bundle: Omit<OfflineBundle, "savedAt">
   await withStore("readwrite", (store) => store.put(full));
 }
 
+// Saves a material for offline use, fetching its current flashcards and
+// quiz fresh from the network first — for call sites (a plain Download
+// button, say) that don't already have them loaded via useFlashcards/
+// useQuizQuestions the way the material detail page's own "Save for
+// offline" button does. Best-effort: never throws. Whatever download
+// this is paired with has already succeeded by the time it's called —
+// failing to ALSO cache it offline is a missed bonus, not something that
+// should surface as an error on top of an already-successful download.
+export async function saveMaterialOfflineFromDownload(material: MaterialWithCourse): Promise<void> {
+  try {
+    const [{ data: flashcards }, { data: quiz }] = await Promise.all([
+      supabase.from("flashcards").select("*").eq("material_id", material.id),
+      supabase.from("quiz_questions").select("*").eq("material_id", material.id),
+    ]);
+    await saveMaterialOffline({ material, flashcards: flashcards ?? [], quiz: quiz ?? [] });
+  } catch (e) {
+    console.error("Couldn't cache this material for offline use after download:", e);
+  }
+}
+
 export async function getOfflineMaterial(id: string): Promise<OfflineBundle | null> {
   try {
     const result = await withStore<OfflineBundle | undefined>("readonly", (store) => store.get(id));
@@ -107,4 +128,4 @@ export function useOnlineStatus(): boolean {
   }, []);
 
   return online;
-}
+                     }
