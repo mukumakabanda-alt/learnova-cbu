@@ -3,10 +3,11 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useCatalog } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { FileText, Loader2, Search } from "lucide-react";
+import { FileText, Loader2, Search, Eye } from "lucide-react";
 
 export const Route = createFileRoute("/study")({
   head: () => ({
@@ -38,6 +39,11 @@ function StudyHub() {
   const programmeFilter = !showAll && profile?.programme_code ? profile.programme_code : null;
   const { data: materials, isLoading } = useCatalog(q, programmeFilter);
 
+  // Lets a card's "View" button open the document right where you are,
+  // instead of the only option being to navigate to /study/$id first and
+  // then tap View again there. Previewing used to always be a two-tap
+  // journey from this list — this makes it one.
+  const [viewerMaterial, setViewerMaterial] = useState<{ id: string; file_path: string | null; title: string } | null>(null);
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -84,21 +90,27 @@ function StudyHub() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.22, delay: Math.min(idx * 0.035, 0.4) }}
+                    className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft"
                   >
-                    <Link
-                      to="/study/$id"
-                      params={{ id: m.id }}
-                      className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft"
-                    >
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {m.courses?.code ?? "General"} · {statusLabel(m.status)}
-                          {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
-                        </div>
+                    <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                      <FileText className="h-5 w-5" />
+                    </Link>
+                    <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {m.courses?.code ?? "General"} · {statusLabel(m.status)}
+                        {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
                       </div>
                     </Link>
+                    {m.file_path && (
+                      <button
+                        onClick={() => setViewerMaterial({ id: m.id, file_path: m.file_path, title: m.title })}
+                        aria-label={`Preview ${m.title}`}
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    )}
                   </motion.div>
                 ))
               ) : (
@@ -118,8 +130,17 @@ function StudyHub() {
           </aside>
         </div>
       </div>
+
+      <DocumentViewer
+        open={!!viewerMaterial}
+        onClose={() => setViewerMaterial(null)}
+        materialId={viewerMaterial?.id ?? ""}
+        filePath={viewerMaterial?.file_path ?? null}
+        title={viewerMaterial?.title ?? ""}
+      />
+
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-}
+                  }
