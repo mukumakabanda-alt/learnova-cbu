@@ -191,4 +191,4 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
     // read the blob on some devices, so this waits a few seconds first.
     setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
   }
-                            }
+    }
