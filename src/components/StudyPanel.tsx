@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
-  Download, Eye, Share2, Heart, WifiOff, HardDriveDownload, Check, AlertTriangle, Youtube, Flame,
+  Download, Eye, Share2, Heart, WifiOff, Check, AlertTriangle, Youtube, Flame,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -10,7 +10,7 @@ import {
   useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike, type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOffline, getOfflineMaterial, removeOfflineMaterial, useOnlineStatus } from "@/lib/offline";
+import { saveMaterialOffline, saveMaterialOfflineFromDownload, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
 import { forceDownload } from "@/lib/document-files";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
@@ -51,14 +51,22 @@ export function StudyPanel({
   const { data: liked } = useMaterialLikeStatus(material.id);
   const toggleLike = useToggleMaterialLike();
 
-  const [offlineSaved, setOfflineSaved] = useState(false);
-  const [savingOffline, setSavingOffline] = useState(false);
+  // Download and "Save for offline" used to be two separate buttons that
+  // both quietly did almost the same thing — confusing, and it meant
+  // downloading a file never visibly registered anywhere. They're one
+  // button now: Download saves the file to the device AND the in-app
+  // Library in one tap, and the button itself becomes the status —
+  // "Download" flips to "Downloaded" the moment it's cached, tap again
+  // to remove. useOfflineStatus is reactive (see src/lib/offline.ts), so
+  // this stays in sync if the same material is downloaded from
+  // somewhere else too.
+  const { downloaded } = useOfflineStatus(material.id);
   const [downloading, setDownloading] = useState(false);
+  const [removingOffline, setRemovingOffline] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
 
   // These share a react-query cache key with the ones FlashcardDeck/Quiz
-  // use, so this doesn't cause an extra network round trip — it just lets
-  // "Save for offline" grab the same data once it's loaded.
+  // use, so this doesn't cause an extra network round trip.
   const { data: flashcardsForOffline } = useFlashcards(material.id);
   const { data: quizForOffline } = useQuizQuestions(material.id);
 
@@ -97,51 +105,12 @@ export function StudyPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [material.id, material.status]);
 
+  // If this material is already saved offline, opening its page counts
+  // as "opening" it for the Library's "recently opened" ordering — the
+  // closest thing offline has to Spotify's "Recently played."
   useEffect(() => {
-    let active = true;
-    getOfflineMaterial(material.id).then((bundle) => {
-      if (active) setOfflineSaved(!!bundle);
-    });
-    return () => {
-      active = false;
-    };
+    touchLastOpened(material.id);
   }, [material.id]);
-
-  async function handleSaveOffline() {
-    setSavingOffline(true);
-    try {
-      await saveMaterialOffline({
-        material,
-        flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
-        quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
-      });
-      setOfflineSaved(true);
-      toast.success("Saved for offline — it'll open with zero signal from here on.");
-    } catch (e) {
-      // This used to fail completely silently — the button just wouldn't
-      // flip to "saved," with zero indication why (private browsing,
-      // storage quota, IndexedDB disabled by the browser, anything).
-      // Same fix as handleRemoveOffline/handleDownload right below: say
-      // what happened instead of pretending nothing did.
-      console.error("Saving offline failed:", e);
-      toast.error("Couldn't save this for offline — this browser may be blocking local storage (private/incognito mode is the usual cause).");
-    } finally {
-      setSavingOffline(false);
-    }
-  }
-
-  async function handleRemoveOffline() {
-    setSavingOffline(true);
-    try {
-      await removeOfflineMaterial(material.id);
-      setOfflineSaved(false);
-      toast.success("Removed from offline storage.");
-    } catch {
-      toast.error("Couldn't remove the offline copy right now.");
-    } finally {
-      setSavingOffline(false);
-    }
-  }
 
   // Opens the in-website document viewer (see DocumentViewer) instead of
   // trying to open a new browser tab. That old approach was the actual
@@ -154,29 +123,24 @@ export function StudyPanel({
     setViewerOpen(true);
   }
 
-  // Forces an actual save-to-device download (rather than an inline
-  // preview) via the shared forceDownload helper — same signed-URL +
-  // Content-Disposition:attachment approach the DocumentViewer's own
-  // Download button uses, so both behave identically.
+  // Downloads to the device AND caches the real file for the Offline
+  // Library in the same action — see the comment on the `downloaded`
+  // state above for why these used to be two separate, confusing
+  // buttons.
   async function handleDownload() {
     if (!material.file_path) return;
     setDownloading(true);
     try {
-      await forceDownload(material.file_path, material.title);
+      const blob = await forceDownload(material.file_path, material.title);
       incrementDownload.mutate(material.id);
-      // Downloading and "Save for offline" used to be two unrelated
-      // actions — downloading a file never made it show up in the
-      // Offline Library. We already have this material's flashcards/quiz
-      // loaded above for the Save-for-offline button, so piggyback the
-      // same save here too, fire-and-forget so it never delays or blocks
-      // the download itself finishing.
-      saveMaterialOffline({
+      await saveMaterialOffline({
         material,
         flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
         quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
-      })
-        .then(() => setOfflineSaved(true))
-        .catch((e) => console.error("Couldn't cache this material for offline use after download:", e));
+        fileBlob: blob,
+        fileMime: blob.type,
+      });
+      toast.success("Downloaded — also in your Library, opens with zero signal from here on.");
       // Feeds the local Learnova AI student-memory system so "documents
       // downloaded" on the dashboard is accurate — see
       // src/lib/student-profile.ts.
@@ -185,6 +149,19 @@ export function StudyPanel({
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function handleRemoveDownload() {
+    setRemovingOffline(true);
+    try {
+      const { removeOfflineMaterial } = await import("@/lib/offline");
+      await removeOfflineMaterial(material.id);
+      toast.success("Removed from your Library.");
+    } catch {
+      toast.error("Couldn't remove this from your Library right now.");
+    } finally {
+      setRemovingOffline(false);
     }
   }
 
@@ -245,8 +222,8 @@ export function StudyPanel({
 
   return (
     <div>
-      {/* Utility row: view, download, share, like, offline, outdated flag —
-          quiet by default, only shows what applies. Shown regardless of
+      {/* Utility row: view, download, share, like, outdated flag — quiet
+          by default, only shows what applies. Shown regardless of
           processing status: the raw file is already safely uploaded and
           viewable/downloadable even while AI-generated study tools are
           still being produced (or failed outright) — a document being
@@ -258,8 +235,20 @@ export function StudyPanel({
             <button onClick={handleView} className={pillBtn}>
               <Eye className="h-3.5 w-3.5" /> View
             </button>
-            <button onClick={handleDownload} disabled={downloading} className={pillBtn}>
-              {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Download
+            <button
+              onClick={downloaded ? handleRemoveDownload : handleDownload}
+              disabled={downloading || removingOffline}
+              className={`${pillBtn} ${downloaded ? "border-teal/40 bg-teal/10 text-teal hover:bg-teal/10" : ""}`}
+              title={downloaded ? "Downloaded — opens with zero signal. Tap to remove." : "Download — saves to your device and your offline Library"}
+            >
+              {downloading || removingOffline ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : downloaded ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {downloaded ? "Downloaded" : "Download"}
             </button>
           </>
         )}
@@ -273,17 +262,6 @@ export function StudyPanel({
         >
           <Heart className={`h-3.5 w-3.5 ${liked ? "fill-current" : ""}`} />
           {material.likes_count > 0 ? material.likes_count : "Like"}
-        </button>
-        <button
-          onClick={offlineSaved ? handleRemoveOffline : handleSaveOffline}
-          disabled={savingOffline}
-          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-default ${
-            offlineSaved ? "border-teal/40 bg-teal/10 text-teal" : "border-border bg-surface text-foreground hover:bg-muted"
-          }`}
-          title={offlineSaved ? "Remove the offline copy from this device" : "Save this material for offline study"}
-        >
-          {savingOffline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : offlineSaved ? <Check className="h-3.5 w-3.5" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
-          {offlineSaved ? "Remove offline" : "Save for offline"}
         </button>
         {!isOnline && (
           <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
