@@ -6,9 +6,9 @@ import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Bookmark, Download, Eye, FileText } from "lucide-react";
+import { ArrowLeft, Bookmark, Download, Eye, FileText, Check } from "lucide-react";
 import { forceDownload } from "@/lib/document-files";
-import { saveMaterialOfflineFromDownload } from "@/lib/offline";
+import { saveMaterialOfflineFromDownload, useOfflineStatus } from "@/lib/offline";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -35,6 +35,91 @@ function materialStatusLabel(status: string): string {
   }
 }
 
+// One card, one component instance — needed so useOfflineStatus can be
+// called per-card correctly (a hook can't be called from inside a bare
+// .map() callback, only from inside its own component).
+function MaterialRowCard({
+  m,
+  course,
+  isSaved,
+  isPending,
+  onToggleSaved,
+  onPreview,
+}: {
+  m: MaterialRow;
+  course: { title: string; code: string; programme_code: string };
+  isSaved: boolean;
+  isPending: boolean;
+  onToggleSaved: () => void;
+  onPreview: () => void;
+}) {
+  const { downloaded } = useOfflineStatus(m.id);
+  const incrementDownload = useIncrementDownload();
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownload() {
+    if (!m.file_path) return;
+    setDownloading(true);
+    try {
+      const blob = await forceDownload(m.file_path, m.title);
+      incrementDownload.mutate(m.id);
+      await saveMaterialOfflineFromDownload({ ...m, courses: course }, { blob, mime: blob.type });
+      toast.success("Downloaded — also in your Library, opens with zero signal.");
+    } catch {
+      toast.error("Couldn't download that file right now — try again in a moment.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="group card-hover flex items-center gap-3 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
+      <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></Link>
+      <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>
+          {m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}
+          {downloaded && (
+            <span className="flex items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
+              <Check className="h-2.5 w-2.5" /> Downloaded
+            </span>
+          )}
+        </div>
+        <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
+        <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
+      </Link>
+      <button
+        onClick={onToggleSaved}
+        disabled={isPending}
+        aria-pressed={isSaved}
+        className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:cursor-wait disabled:opacity-60 ${isSaved ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"}`}
+      >
+        <Bookmark className="h-4 w-4" />
+      </button>
+      {m.file_path && (
+        <button
+          onClick={onPreview}
+          aria-label={`Preview ${m.title}`}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+        >
+          <Eye className="h-4 w-4" />
+        </button>
+      )}
+      {m.file_path && (
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:opacity-60 ${
+            downloaded ? "border-teal/40 bg-teal/10 text-teal" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+          }`}
+        >
+          {downloading ? <Download className="h-4 w-4 animate-pulse" /> : downloaded ? <Check className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function CoursePage() {
   const { code } = Route.useParams();
   const { data: course, isLoading } = useCourse(code);
@@ -42,7 +127,6 @@ function CoursePage() {
   const { user } = useAuth();
   const { data: saved } = useSavedMaterials();
   const toggleSaved = useToggleSaved();
-  const incrementDownload = useIncrementDownload();
   const savedIds = new Set((saved ?? []).map((s) => s.material_id));
 
   // Tracks which specific bookmark buttons are mid-request, so a fast
@@ -86,30 +170,7 @@ function CoursePage() {
     );
   }
 
-  // Was its own separate, half-broken implementation — a 60-second signed
-  // URL, and window.open() called *after* an await, which mobile
-  // browsers routinely block as a popup (see the long comment in
-  // src/lib/document-files.ts). Now uses the same shared, working
-  // download path as the study page and document viewer, so it behaves
-  // identically everywhere: an hour-long signed URL, a real forced
-  // save-to-device download via a blob: URL, a visible error instead of
-  // failing silently, and — same fix as everywhere else this round — it
-  // also caches the material for offline use (this list doesn't come
-  // with the `courses` join useCatalog's does, so it's built manually
-  // from the course already loaded on this page).
-  async function downloadMaterial(m: MaterialRow) {
-    if (!m.file_path) return;
-    try {
-      await forceDownload(m.file_path, m.title);
-      incrementDownload.mutate(m.id);
-      saveMaterialOfflineFromDownload({
-        ...m,
-        courses: { title: course.title, code: course.code, programme_code: course.programme_code },
-      }).catch(() => {});
-    } catch {
-      toast.error("Couldn't download that file right now — try again in a moment.");
-    }
-  }
+  const courseInfo = { title: course.title, code: course.code, programme_code: course.programme_code };
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -139,40 +200,17 @@ function CoursePage() {
                 Nothing uploaded for this course yet — be the first.
               </div>
             )}
-            {(materials ?? []).map((m) => {
-              const isSaved = savedIds.has(m.id);
-              const isPending = pendingSaveIds.has(m.id);
-              return (
-                <div key={m.id} className="group card-hover flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
-                  <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></Link>
-                  <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2"><span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>{m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}</div>
-                    <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
-                    <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
-                  </Link>
-                  <button
-                    onClick={() => handleToggleSaved(m.id, !isSaved)}
-                    disabled={isPending}
-                    aria-pressed={isSaved}
-                    className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:cursor-wait disabled:opacity-60 ${isSaved ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"}`}
-                  >
-                    <Bookmark className="h-4 w-4" />
-                  </button>
-                  {m.file_path && (
-                    <button
-                      onClick={() => setViewerMaterial(m)}
-                      aria-label={`Preview ${m.title}`}
-                      className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                  )}
-                  {m.file_path && (
-                    <button onClick={() => downloadMaterial(m)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"><Download className="h-4 w-4" /></button>
-                  )}
-                </div>
-              );
-            })}
+            {(materials ?? []).map((m) => (
+              <MaterialRowCard
+                key={m.id}
+                m={m}
+                course={courseInfo}
+                isSaved={savedIds.has(m.id)}
+                isPending={pendingSaveIds.has(m.id)}
+                onToggleSaved={() => handleToggleSaved(m.id, !savedIds.has(m.id))}
+                onPreview={() => setViewerMaterial(m)}
+              />
+            ))}
           </div>
 
           <h2 className="mt-10 font-display text-2xl text-foreground">Course outline</h2>
@@ -212,15 +250,11 @@ function CoursePage() {
         materialId={viewerMaterial?.id ?? ""}
         filePath={viewerMaterial?.file_path ?? null}
         title={viewerMaterial?.title ?? ""}
-        material={
-          viewerMaterial
-            ? { ...viewerMaterial, courses: { title: course.title, code: course.code, programme_code: course.programme_code } }
-            : null
-        }
+        material={viewerMaterial ? { ...viewerMaterial, courses: courseInfo } : null}
       />
 
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-}
+        }
