@@ -34,6 +34,52 @@ const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 const TEXT_EXTS = new Set(["txt", "md", "csv", "json", "log"]);
 const OFFICE_EXTS = new Set(["doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf"]);
 
+// Maps a MIME type to the extension this app would give a file of that
+// type — used in two places: ensureFileExtension() below, to give a
+// proper extension to files whose original name had none at all (very
+// common for photos/documents saved via WhatsApp on Android, which
+// frequently strips it entirely); and previewKindFromMime() further
+// down, as a fallback for files that were already stored that way
+// before this existed.
+const MIME_TO_EXTENSION: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/bmp": "bmp",
+  "image/svg+xml": "svg",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/csv": "csv",
+  "application/json": "json",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/rtf": "rtf",
+  "application/zip": "zip",
+  "application/x-zip-compressed": "zip",
+};
+
+// Ensures a filename ends in a real extension, inferring one from its
+// MIME type when it doesn't already have one. Without this, a file saved
+// via WhatsApp on Android (which often strips the extension entirely)
+// got stored with a path like ".../a1b2c3-580085" — no dot anywhere —
+// which meant previewKind() below had nothing to go on and always fell
+// back to "no inline preview," even for a perfectly normal photo or PDF,
+// and the downloaded copy on the person's own phone had the same
+// problem opening it correctly.
+export function ensureFileExtension(filename: string, mimeType: string): string {
+  if (/\.[a-zA-Z0-9]{1,8}$/.test(filename)) return filename;
+  const inferred = MIME_TO_EXTENSION[mimeType.split(";")[0].trim().toLowerCase()];
+  return inferred ? `${filename}.${inferred}` : filename;
+}
+
 // Decides how the in-website viewer should render a file. PDFs and images
 // render natively in the browser; Office formats have no native in-browser
 // renderer, so they go through Google's document viewer instead (it just
@@ -47,6 +93,43 @@ export function previewKind(filePath: string): PreviewKind {
   if (TEXT_EXTS.has(ext)) return "text";
   if (OFFICE_EXTS.has(ext)) return "office";
   return "none";
+}
+
+// Fallback for previewKind() when the stored path has no recognizable
+// extension (see ensureFileExtension above — this covers files that were
+// already uploaded before that existed, like the "580085" one). Reads
+// the Content-Type Storage itself recorded for the file, via
+// sniffContentType() below, rather than giving up.
+export function previewKindFromMime(mime: string | null): PreviewKind {
+  if (!mime) return "none";
+  const type = mime.split(";")[0].trim().toLowerCase();
+  if (type === "application/pdf") return "pdf";
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("text/")) return "text";
+  if (
+    type === "application/msword" ||
+    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    type === "application/vnd.ms-powerpoint" ||
+    type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    type === "application/vnd.ms-excel" ||
+    type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    type === "application/rtf"
+  ) {
+    return "office";
+  }
+  return "none";
+}
+
+// A lightweight HEAD request against a signed URL, used only to read
+// back the Content-Type Storage recorded for the file — never downloads
+// the body. See previewKindFromMime() above.
+export async function sniffContentType(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, { method: "HEAD" });
+    return response.headers.get("content-type");
+  } catch {
+    return null;
+  }
 }
 
 // A signed URL good for an hour. The old 60-second expiry was a real bug:
@@ -108,4 +191,4 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
     // read the blob on some devices, so this waits a few seconds first.
     setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
   }
-  }
+                            }
