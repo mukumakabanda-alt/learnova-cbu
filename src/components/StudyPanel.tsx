@@ -164,6 +164,19 @@ export function StudyPanel({
     try {
       await forceDownload(material.file_path, material.title);
       incrementDownload.mutate(material.id);
+      // Downloading and "Save for offline" used to be two unrelated
+      // actions — downloading a file never made it show up in the
+      // Offline Library. We already have this material's flashcards/quiz
+      // loaded above for the Save-for-offline button, so piggyback the
+      // same save here too, fire-and-forget so it never delays or blocks
+      // the download itself finishing.
+      saveMaterialOffline({
+        material,
+        flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
+        quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
+      })
+        .then(() => setOfflineSaved(true))
+        .catch((e) => console.error("Couldn't cache this material for offline use after download:", e));
       // Feeds the local Learnova AI student-memory system so "documents
       // downloaded" on the dashboard is accurate — see
       // src/lib/student-profile.ts.
@@ -397,6 +410,7 @@ export function StudyPanel({
         materialId={material.id}
         filePath={material.file_path}
         title={material.title}
+        material={material}
       />
     </div>
   );
@@ -597,4 +611,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-                                                }
+  }
