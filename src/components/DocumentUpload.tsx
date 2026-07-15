@@ -47,6 +47,76 @@ function describeUploadError(e: unknown): string {
   return "Something went wrong uploading that file — mind trying again?";
 }
 
+// Runs the (synchronous, sometimes slow) LearnovaAI engine inside a Web
+// Worker instead of blocking the main thread. Measured: a realistic
+// ~60,000-character upload (a combined set of notes, or one longer
+// scanned chapter) takes several seconds of pure computation — on the
+// main thread that freezes the whole upload screen for that whole time,
+// which on a phone reads as "the app just died." Falls back to running
+// on the main thread (the previous behavior) if Workers aren't
+// available, the worker fails to start, or it times out — so this can
+// never make an upload fail outright, only ever change WHERE the same
+// computation happens.
+function runAIOffMainThread(
+  text: string,
+  options: Parameters<typeof LearnovaAI.processDocument>[1],
+): Promise<ReturnType<typeof LearnovaAI.processDocument>> {
+  if (typeof Worker === "undefined") {
+    return Promise.resolve(LearnovaAI.processDocument(text, options));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let worker: Worker | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (timer !== null) clearTimeout(timer);
+      worker?.terminate();
+    };
+
+    const finish = (value: ReturnType<typeof LearnovaAI.processDocument>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const fallbackToMainThread = (reason: unknown) => {
+      console.error("AI worker unavailable, falling back to the main thread:", reason);
+      try {
+        finish(LearnovaAI.processDocument(text, options));
+      } catch (e) {
+        fail(e);
+      }
+    };
+
+    try {
+      worker = new Worker(new URL("../lib/learnova-ai/worker.ts", import.meta.url), { type: "module" });
+    } catch (e) {
+      fallbackToMainThread(e);
+      return;
+    }
+
+    timer = setTimeout(() => fallbackToMainThread("timed out after 45s"), 45_000);
+
+    worker.onmessage = (e: MessageEvent) => {
+      if (e.data?.ok) finish(e.data.result);
+      else fallbackToMainThread(e.data?.error);
+    };
+    worker.onerror = (err) => fallbackToMainThread(err);
+
+    worker.postMessage({ text, options });
+  });
+}
+
 export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -129,13 +199,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
 
-      // 3. Generate study tools — entirely on-device via the Learnova AI
-      // engine (src/lib/learnova-ai), so this costs nothing, needs no
-      // network round trip to any external model, and never leaves a
-      // material sitting in "processing": by the time the row is
-      // inserted below, its summary, flashcards and quiz already exist.
-      // A short/empty extraction skips this step entirely — the material
-      // is still saved either way, same as before.
+      // 3. Generate study tools — off the main thread via a Web Worker
+      // (see runAIOffMainThread above), so this costs nothing, needs no
+      // network round trip to any external model, and doesn't freeze the
+      // upload screen on a large document. A short/empty extraction
+      // skips this step entirely — the material is still saved either
+      // way, same as before.
       setStageIndex(2);
       let summary: string | null = null;
       let tags: string[] = [];
@@ -144,7 +213,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
       if (quality !== "none") {
         try {
-          const result = LearnovaAI.processDocument(safeDbText(text), {
+          const result = await runAIOffMainThread(safeDbText(text), {
             title,
             contentYear: validYear,
             courseCode: courseCode ?? null,
@@ -162,8 +231,9 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           })).filter((q) => q.question && q.options.length >= 2);
         } catch (e) {
           // The engine is designed to degrade gracefully on its own and
-          // this shouldn't normally throw, but if it somehow does, the
-          // upload still falls through to catalog_only below rather than
+          // this shouldn't normally throw, but if it somehow does (or the
+          // worker AND its main-thread fallback both fail), the upload
+          // still falls through to catalog_only below rather than
           // failing outright.
           console.error("Learnova AI processing failed:", e);
         }
@@ -207,8 +277,9 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // Best-effort: if either insert fails, the material itself is
       // already safely saved above — it just opens to "no flashcards/
       // quiz yet" instead of erroring the whole upload. (If this is
-      // still failing after applying the new RLS migration, that's the
-      // thing to check first — this used to fail 100% of the time for
+      // still failing, check that the flashcard/quiz RLS migration
+      // actually ran against your live database — see the SQL check at
+      // the top of this message. This used to fail 100% of the time for
       // every non-admin account.)
       if (quality !== "none") {
         if (flashcards.length) {
@@ -391,4 +462,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-         }
+  }
