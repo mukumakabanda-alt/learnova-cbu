@@ -17,6 +17,7 @@
 // Library (see src/lib/offline.ts) — using the exact same rendering path
 // either way.
 
+import "@/lib/polyfills"; // must load before pdf.js — see that file for why
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -32,19 +33,10 @@ import { getOfflineMaterial, saveMaterialOfflineFromDownload, touchLastOpened, u
 
 const MAX_PREVIEW_PAGES = 40;
 
-// Renders a PDF (given as a Blob — never a URL) page by page onto plain
-// <canvas> elements via pdf.js. See the file-level comment above for why
-// this exists instead of an iframe.
 function PdfCanvasViewer({ blob }: { blob: Blob }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [truncated, setTruncated] = useState<{ shown: number; total: number } | null>(null);
-  // The real underlying reason, surfaced instead of a generic message —
-  // this is the difference between guessing what's wrong and actually
-  // knowing. Distinguishes, for example, "the stored file is 0 bytes"
-  // (an upload/storage problem) from a genuine PDF parsing error (a
-  // malformed or unusual file) from a worker-loading failure (an
-  // environment/asset-serving problem, not the file at all).
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
 
   useEffect(() => {
@@ -140,7 +132,6 @@ export function DocumentViewer({
   materialId: string;
   filePath: string | null;
   title: string;
-  /** When provided, Download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. */
   material?: MaterialWithCourse | null;
 }) {
   const { user } = useAuth();
@@ -151,10 +142,10 @@ export function DocumentViewer({
   const { downloaded } = useOfflineStatus(materialId);
 
   const [kind, setKind] = useState<PreviewKind | null>(null);
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null); // for "pdf" (fed straight to pdf.js) and reused for Download
-  const [imageUrl, setImageUrl] = useState<string | null>(null); // for "image" — <img> only, never an iframe
-  const [textContent, setTextContent] = useState<string | null>(null); // for "text"
-  const [officeUrl, setOfficeUrl] = useState<string | null>(null); // for "office" — Google's viewer needs a real fetchable URL, can't use a local blob
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [officeUrl, setOfficeUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
@@ -179,7 +170,6 @@ export function DocumentViewer({
       } else if (resolvedKind === "text") {
         setTextContent(await blob.text());
       }
-      // "pdf" needs nothing further here — PdfCanvasViewer reads previewBlob directly.
     }
 
     async function useOfflineCopy(): Promise<boolean> {
@@ -243,7 +233,6 @@ export function DocumentViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, filePath, materialId]);
 
-  // Locks page scroll behind the full-screen overlay while it's open.
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -405,4 +394,4 @@ function ViewerMessage({ icon: Icon, text, detail }: { icon: typeof FileWarning;
       )}
     </div>
   );
-    }
+                                                           }
