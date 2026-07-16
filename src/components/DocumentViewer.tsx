@@ -1,24 +1,28 @@
 // Full-screen in-website document viewer.
 //
-// Renders a preview right inside the site — PDFs and images natively,
-// Office files through Google's document viewer — with Save and
-// Download right next to it. For PDFs/images/text, the file is fetched
-// first and rendered from a local blob: URL rather than pointing the
-// iframe/img straight at the (cross-origin) signed URL — some mobile
-// browsers, in some embedding contexts, treat a directly-linked file as
-// something to hand off externally rather than render inline, which
-// looked exactly like "View triggers a download instead of a preview."
-// Critically, the blob is also re-typed to match whatever kind we've
-// already determined the file really is (extension → Content-Type →
-// magic bytes) — the raw fetch response's own Content-Type can be just
-// as wrong/generic as the stored filename was for extensionless files,
-// and a blob the browser doesn't recognize as application/pdf won't
-// render inline in an iframe no matter how it got there. Online, it
-// always prefers a fresh copy; offline, or if the network request
-// fails, it falls back to whatever's cached in the Offline Library (see
-// src/lib/offline.ts).
+// PDFs are rendered page-by-page onto plain <canvas> elements using
+// pdf.js (already a dependency — it's what reads text out of uploads in
+// document-text.ts) instead of an <iframe src="..."> pointed at a blob:
+// or signed URL. That approach depends on the browser's own built-in PDF
+// viewer deciding to render the resource inline rather than treat it as
+// a completed download — which turned out to be inconsistent (some
+// environments showed their own "tap to open" download card instead of
+// rendering, which does nothing when tapped since there's no app to hand
+// it to inside an embedded webview). Drawing the pages ourselves removes
+// that decision from the picture entirely: there is no download to
+// trigger, no Content-Type/Content-Disposition ambiguity, nothing handed
+// off anywhere — just pixels on a canvas we control. Plain text is read
+// and shown directly for the same reason. Images keep using <img>, which
+// never had this problem (browsers don't make an "is this a download"
+// decision for image tags).
+//
+// Online, it always prefers a fresh copy; offline, or if the network
+// request fails, it falls back to whatever's cached in the Offline
+// Library (see src/lib/offline.ts) — using the exact same rendering path
+// either way, so a downloaded document looks and behaves identically
+// online or off.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion, Check, CloudOff } from "lucide-react";
@@ -29,19 +33,90 @@ import {
 } from "@/lib/document-files";
 import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOfflineFromDownload, getOfflineFileUrl, touchLastOpened, useOfflineStatus } from "@/lib/offline";
+import { getOfflineMaterial, saveMaterialOfflineFromDownload, touchLastOpened, useOfflineStatus } from "@/lib/offline";
 
-// The MIME type to force onto a fetched blob for each kind, regardless
-// of what the network response itself reported. PDF is the critical
-// one — an iframe only hands rendering to the browser's built-in PDF
-// viewer for a blob: URL that's actually typed application/pdf; text is
-// corrected for the same reason; images are left alone, since browsers
-// reliably sniff the real image format from the bytes themselves
-// regardless of the declared type, so there's nothing to fix there.
-const RENDER_MIME: Partial<Record<PreviewKind, string>> = {
-  pdf: "application/pdf",
-  text: "text/plain;charset=utf-8",
-};
+const MAX_PREVIEW_PAGES = 40;
+
+// Renders a PDF (given as a Blob — never a URL) page by page onto plain
+// <canvas> elements via pdf.js. See the file-level comment above for why
+// this exists instead of an iframe.
+function PdfCanvasViewer({ blob }: { blob: Blob }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [truncated, setTruncated] = useState<{ shown: number; total: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let pdfDoc: any = null;
+
+    async function render() {
+      try {
+        const [pdfjsLib, workerUrlMod] = await Promise.all([
+          import("pdfjs-dist"),
+          import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+        ]);
+        (pdfjsLib as any).GlobalWorkerOptions.workerSrc = (workerUrlMod as any).default;
+
+        const buffer = await blob.arrayBuffer();
+        if (cancelled) return;
+        pdfDoc = await (pdfjsLib as any).getDocument({ data: buffer }).promise;
+        if (cancelled) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+
+        const pagesToRender = Math.min(pdfDoc.numPages, MAX_PREVIEW_PAGES);
+        if (pagesToRender < pdfDoc.numPages) setTruncated({ shown: pagesToRender, total: pdfDoc.numPages });
+
+        for (let i = 1; i <= pagesToRender; i++) {
+          if (cancelled) return;
+          const page = await pdfDoc.getPage(i);
+          const viewport = page.getViewport({ scale: 1.6 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.className = "mx-auto mb-3 block max-w-full rounded-lg border border-border shadow-soft";
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          if (cancelled) return;
+          container.appendChild(canvas);
+        }
+        if (!cancelled) setStatus("ready");
+      } catch (e) {
+        console.error("PDF render failed:", e);
+        if (!cancelled) setStatus("error");
+      }
+    }
+
+    render();
+    return () => {
+      cancelled = true;
+      pdfDoc?.destroy?.();
+    };
+  }, [blob]);
+
+  if (status === "error") {
+    return <ViewerMessage icon={FileWarning} text="Couldn't render this PDF — try downloading it instead." />;
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl p-4">
+      {status === "loading" && (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      )}
+      <div ref={containerRef} />
+      {truncated && (
+        <p className="mt-2 text-center text-xs text-muted-foreground">
+          Showing the first {truncated.shown} of {truncated.total} pages — download to see the rest.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function DocumentViewer({
   open,
@@ -66,28 +141,46 @@ export function DocumentViewer({
   const isSaved = (saved ?? []).some((s) => s.material_id === materialId);
   const { downloaded } = useOfflineStatus(materialId);
 
-  const [url, setUrl] = useState<string | null>(null);
+  const [kind, setKind] = useState<PreviewKind | null>(null);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null); // for "pdf" (fed straight to pdf.js) and reused for Download
+  const [imageUrl, setImageUrl] = useState<string | null>(null); // for "image" — <img> only, never an iframe
+  const [textContent, setTextContent] = useState<string | null>(null); // for "text"
+  const [officeUrl, setOfficeUrl] = useState<string | null>(null); // for "office" — Google's viewer needs a real fetchable URL, can't use a local blob
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [kind, setKind] = useState<PreviewKind | null>(null);
   const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
 
   useEffect(() => {
     if (!open || !filePath) return;
     let active = true;
-    let localBlobUrl: string | null = null;
-    setUrl(null);
-    setLoadError(false);
+    let localImageUrl: string | null = null;
     setKind(null);
-    setUsingOfflineCopy(false);
     setPreviewBlob(null);
+    setImageUrl(null);
+    setTextContent(null);
+    setOfficeUrl(null);
+    setLoadError(false);
+    setUsingOfflineCopy(false);
+
+    async function renderFromBlob(resolvedKind: PreviewKind, blob: Blob) {
+      setPreviewBlob(blob);
+      if (resolvedKind === "image") {
+        localImageUrl = URL.createObjectURL(blob);
+        setImageUrl(localImageUrl);
+      } else if (resolvedKind === "text") {
+        setTextContent(await blob.text());
+      }
+      // "pdf" needs nothing further here — PdfCanvasViewer reads previewBlob directly.
+    }
 
     async function useOfflineCopy(): Promise<boolean> {
-      const cached = await getOfflineFileUrl(materialId);
-      if (!active || !cached) return false;
-      setUrl(cached.url);
-      setKind(previewKindFromMime(cached.mime));
+      const bundle = await getOfflineMaterial(materialId);
+      if (!active || !bundle?.fileBlob) return false;
+      const detectedKind = previewKindFromMime(bundle.fileMime || bundle.fileBlob.type || null);
+      setKind(detectedKind);
+      if (detectedKind === "pdf" || detectedKind === "image" || detectedKind === "text") {
+        await renderFromBlob(detectedKind, bundle.fileBlob);
+      }
       setUsingOfflineCopy(true);
       touchLastOpened(materialId);
       return true;
@@ -118,26 +211,18 @@ export function DocumentViewer({
         setKind(resolvedKind);
 
         if (resolvedKind === "office" || resolvedKind === "none") {
-          // Google's viewer fetches this itself from its own servers, so
-          // it needs a real reachable URL, not a local blob: one. "none"
-          // doesn't render anything, so the raw URL is harmless either way.
-          setUrl(signed);
+          // Google's viewer fetches this from its own servers, so it
+          // needs a real reachable URL. "none" renders nothing, so the
+          // URL is unused but harmless to keep around.
+          setOfficeUrl(signed);
           return;
         }
 
-        // pdf / image / text: fetch the bytes and render from a local
-        // blob: URL, re-typed to match what we've already determined —
-        // see the RENDER_MIME comment above for why this specific part
-        // is what was actually still broken.
         const response = await fetch(signed);
         if (!response.ok) throw new Error(`status ${response.status}`);
-        const rawBlob = await response.blob();
+        const blob = await response.blob();
         if (!active) return;
-        const forcedType = RENDER_MIME[resolvedKind];
-        const blob = forcedType && forcedType !== rawBlob.type ? new Blob([rawBlob], { type: forcedType }) : rawBlob;
-        localBlobUrl = URL.createObjectURL(blob);
-        setPreviewBlob(blob);
-        setUrl(localBlobUrl);
+        await renderFromBlob(resolvedKind, blob);
       } catch {
         const usedCache = await useOfflineCopy();
         if (!usedCache && active) setLoadError(true);
@@ -147,7 +232,7 @@ export function DocumentViewer({
     load();
     return () => {
       active = false;
-      if (localBlobUrl) URL.revokeObjectURL(localBlobUrl);
+      if (localImageUrl) URL.revokeObjectURL(localImageUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, filePath, materialId]);
@@ -164,12 +249,21 @@ export function DocumentViewer({
 
   if (!open) return null;
 
+  const ready =
+    kind === "pdf" ? !!previewBlob :
+    kind === "image" ? !!imageUrl :
+    kind === "text" ? textContent !== null :
+    kind === "office" ? !!officeUrl :
+    kind === "none";
+
   async function handleDownload() {
     if (!filePath) return;
     setDownloading(true);
     try {
       let blob: Blob;
       if (previewBlob) {
+        // Already have the bytes from rendering the preview — reuse
+        // them instead of fetching the same file again.
         downloadBlob(previewBlob, originalFileName(filePath, title));
         blob = previewBlob;
       } else {
@@ -256,16 +350,20 @@ export function DocumentViewer({
                   : "You're offline and this document hasn't been downloaded yet — connect once and tap Download to make it available with zero signal."
               }
             />
-          ) : !url || kind === null ? (
+          ) : kind === null || !ready ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
           ) : kind === "pdf" ? (
-            <iframe title={title} src={url} className="h-full w-full border-0" />
+            <PdfCanvasViewer blob={previewBlob!} />
           ) : kind === "image" ? (
             <div className="flex min-h-full items-center justify-center p-4">
-              <img src={url} alt={title} className="max-h-full max-w-full rounded-lg object-contain" />
+              <img src={imageUrl!} alt={title} className="max-h-full max-w-full rounded-lg object-contain" />
             </div>
+          ) : kind === "text" ? (
+            <pre className="mx-auto max-w-3xl whitespace-pre-wrap break-words p-6 font-mono text-xs leading-relaxed text-foreground">
+              {textContent}
+            </pre>
           ) : kind === "office" ? (
             usingOfflineCopy ? (
               <ViewerMessage icon={FileQuestion} text="Office documents need an internet connection to preview, even from your offline copy — download it to open it on your device instead." />
@@ -273,7 +371,7 @@ export function DocumentViewer({
               <>
                 <iframe
                   title={title}
-                  src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`}
+                  src={`https://docs.google.com/gview?url=${encodeURIComponent(officeUrl!)}&embedded=true`}
                   className="h-full w-full border-0"
                 />
                 <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/90 px-4 py-2 text-center text-[11px] text-muted-foreground">
@@ -281,8 +379,6 @@ export function DocumentViewer({
                 </p>
               </>
             )
-          ) : kind === "text" ? (
-            <iframe title={title} src={url} className="h-full w-full border-0 bg-white" />
           ) : (
             <ViewerMessage icon={FileQuestion} text="No inline preview for this file type — download it to open it on your device." />
           )}
@@ -302,4 +398,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-  }
+          }
