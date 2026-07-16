@@ -192,11 +192,13 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // the text extraction went, so downloads always work.
       setStageIndex(1);
       // ensureFileExtension() covers files (very often ones saved via
-      // WhatsApp on Android) whose name has no extension at all — without
-      // it the stored path has no dot in it anywhere, which broke the
-      // in-app preview entirely (previewKind() had nothing to detect) and
-      // left the downloaded copy unable to open correctly too.
-      const originalName = ensureFileExtension(safeFileName(file.name), file.type);
+      // WhatsApp on Android) whose name has no extension at all — it
+      // tries the file's MIME type first, then reads the file's own
+      // first bytes directly if even that's blank. Without it the
+      // stored path has no dot in it anywhere, which broke the in-app
+      // preview entirely (nothing to detect the file type from at all)
+      // and left the downloaded copy unable to open correctly too.
+      const originalName = await ensureFileExtension(safeFileName(file.name), file);
       const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
       const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
       const { error: uploadError } = await supabase.storage.from("materials").upload(path, file);
@@ -285,7 +287,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // quiz yet" instead of erroring the whole upload. (If this is
       // still failing, check that the flashcard/quiz RLS migration
       // actually ran against your live database via Supabase's SQL
-      // Editor — see the top of this message.)
+      // Editor.)
       if (quality !== "none") {
         if (flashcards.length) {
           const { error: fcError } = await supabase
@@ -467,4 +469,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-}
+      }
