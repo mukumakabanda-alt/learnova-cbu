@@ -2,18 +2,25 @@
 //
 // Renders a preview right inside the site — PDFs and images natively,
 // Office files through Google's document viewer — with Save and
-// Download right next to it. Online, it always prefers a fresh copy;
-// offline, or if the network request itself fails, it falls back to
-// whatever's cached in the Offline Library (see src/lib/offline.ts) —
-// so a downloaded document genuinely opens with zero signal, not just
-// its summary.
+// Download right next to it. For PDFs/images/text, the file is fetched
+// first and rendered from a local blob: URL rather than pointing the
+// iframe/img straight at the (cross-origin) signed URL — some mobile
+// browsers, in some embedding contexts, treat a directly-linked file as
+// something to hand off externally rather than render inline, which
+// looked exactly like "View triggers a download instead of a preview."
+// A blob: URL has no such ambiguity. Online, it always prefers a fresh
+// copy; offline, or if the network request fails, it falls back to
+// whatever's cached in the Offline Library (see src/lib/offline.ts).
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion, Check, CloudOff } from "lucide-react";
 import { toast } from "sonner";
-import { getViewUrl, forceDownload, previewKind, previewKindFromMime, sniffContentType, sniffFileSignature, type PreviewKind } from "@/lib/document-files";
+import {
+  getViewUrl, forceDownload, downloadBlob, originalFileName,
+  previewKind, previewKindFromMime, sniffContentType, sniffFileSignature, type PreviewKind,
+} from "@/lib/document-files";
 import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOfflineFromDownload, getOfflineFileUrl, touchLastOpened, useOfflineStatus } from "@/lib/offline";
@@ -31,7 +38,7 @@ export function DocumentViewer({
   materialId: string;
   filePath: string | null;
   title: string;
-  /** When provided, Download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. Optional so DocumentViewer still works for pure previewing without it. */
+  /** When provided, Download also caches this material for the Offline Library — see saveMaterialOfflineFromDownload. */
   material?: MaterialWithCourse | null;
 }) {
   const { user } = useAuth();
@@ -44,57 +51,75 @@ export function DocumentViewer({
   const [url, setUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [sniffedKind, setSniffedKind] = useState<PreviewKind | null>(null);
+  const [kind, setKind] = useState<PreviewKind | null>(null);
   const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
+  // The already-fetched bytes behind the preview, if this is a PDF/
+  // image/text file rendered from a local blob (see below) — reused by
+  // handleDownload so tapping Download right after previewing doesn't
+  // fetch the same file twice.
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
 
   useEffect(() => {
     if (!open || !filePath) return;
     let active = true;
+    let localBlobUrl: string | null = null;
     setUrl(null);
     setLoadError(false);
-    setSniffedKind(null);
+    setKind(null);
     setUsingOfflineCopy(false);
+    setPreviewBlob(null);
 
     async function useOfflineCopy(): Promise<boolean> {
       const cached = await getOfflineFileUrl(materialId);
       if (!active || !cached) return false;
       setUrl(cached.url);
-      setSniffedKind(previewKindFromMime(cached.mime));
+      setKind(previewKindFromMime(cached.mime));
       setUsingOfflineCopy(true);
       touchLastOpened(materialId);
       return true;
     }
 
+    async function resolveKind(signedUrl: string): Promise<PreviewKind> {
+      const extKind = previewKind(filePath!);
+      if (extKind !== "none") return extKind;
+      const mime = await sniffContentType(signedUrl);
+      const fromMime = previewKindFromMime(mime);
+      if (fromMime !== "none") return fromMime;
+      return sniffFileSignature(signedUrl);
+    }
+
     async function load() {
-      // Genuinely offline: don't wait on a network request that's going
-      // to fail anyway — go straight to whatever's cached.
       if (!navigator.onLine) {
         const usedCache = await useOfflineCopy();
         if (!usedCache && active) setLoadError(true);
         return;
       }
-      // Online: always prefer a fresh copy, but fall back to the cached
-      // one instead of a hard error if the request itself fails — a real
-      // scenario on unreliable mobile data, not just a "no signal" one.
       try {
         const signed = await getViewUrl(filePath);
         if (!active) return;
-        setUrl(signed);
         touchLastOpened(materialId);
-        if (previewKind(filePath) === "none") {
-          const mime = await sniffContentType(signed);
-          let detected = previewKindFromMime(mime);
-          if (detected === "none") {
-            // Content-Type sniffing also came up empty (Storage has this
-            // one recorded as a generic type, e.g. application/octet-
-            // stream, because the browser couldn't detect a MIME type at
-            // upload time either) — read the file's own first bytes
-            // directly, which works regardless of what any browser ever
-            // reported about it.
-            detected = await sniffFileSignature(signed);
-          }
-          if (active) setSniffedKind(detected);
+
+        const resolvedKind = await resolveKind(signed);
+        if (!active) return;
+        setKind(resolvedKind);
+
+        if (resolvedKind === "office" || resolvedKind === "none") {
+          // Google's viewer fetches this itself from its own servers, so
+          // it needs a real reachable URL, not a local blob: one. "none"
+          // doesn't render anything, so the raw URL is harmless either way.
+          setUrl(signed);
+          return;
         }
+
+        // pdf / image / text: fetch the bytes and render from a local
+        // blob: URL — see the file-level comment above for why.
+        const response = await fetch(signed);
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const blob = await response.blob();
+        if (!active) return;
+        localBlobUrl = URL.createObjectURL(blob);
+        setPreviewBlob(blob);
+        setUrl(localBlobUrl);
       } catch {
         const usedCache = await useOfflineCopy();
         if (!usedCache && active) setLoadError(true);
@@ -104,6 +129,7 @@ export function DocumentViewer({
     load();
     return () => {
       active = false;
+      if (localBlobUrl) URL.revokeObjectURL(localBlobUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, filePath, materialId]);
@@ -120,15 +146,19 @@ export function DocumentViewer({
 
   if (!open) return null;
 
-  const extKind = filePath ? previewKind(filePath) : "none";
-  const stillSniffing = extKind === "none" && !!url && sniffedKind === null;
-  const kind: PreviewKind = extKind !== "none" ? extKind : (sniffedKind ?? "none");
-
   async function handleDownload() {
     if (!filePath) return;
     setDownloading(true);
     try {
-      const blob = await forceDownload(filePath, title);
+      let blob: Blob;
+      if (previewBlob) {
+        // Already have the bytes from rendering the preview — reuse
+        // them instead of fetching the same file again.
+        downloadBlob(previewBlob, originalFileName(filePath, title));
+        blob = previewBlob;
+      } else {
+        blob = await forceDownload(filePath, title);
+      }
       incrementDownload.mutate(materialId);
       if (material) {
         await saveMaterialOfflineFromDownload(material, { blob, mime: blob.type });
@@ -161,7 +191,6 @@ export function DocumentViewer({
         aria-modal="true"
         aria-label={title}
       >
-        {/* Toolbar: title, save, download, close — always visible, never scrolls away */}
         <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2.5 sm:px-4">
           <button
             onClick={onClose}
@@ -199,7 +228,6 @@ export function DocumentViewer({
           </div>
         )}
 
-        {/* Preview body */}
         <div className="relative flex-1 overflow-auto bg-surface-muted">
           {!filePath ? (
             <ViewerMessage icon={FileWarning} text="No file is attached to this material." />
@@ -212,7 +240,7 @@ export function DocumentViewer({
                   : "You're offline and this document hasn't been downloaded yet — connect once and tap Download to make it available with zero signal."
               }
             />
-          ) : !url || stillSniffing ? (
+          ) : !url || kind === null ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
@@ -258,4 +286,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-                                                }
+            }
