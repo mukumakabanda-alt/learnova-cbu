@@ -11,7 +11,7 @@ import { LearnovaAI } from "@/lib/learnova-ai";
 const MATERIAL_TYPES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
 
-const STAGES = ["Reading document…", "Uploading…", "Generating summary, flashcards & quiz…", "Adding to catalogue…"];
+const STAGES = ["Reading & uploading…", "Generating summary, flashcards & quiz…", "Adding to catalogue…"];
 
 function safeDbText(value: unknown, fallback = ""): string {
   return String(value ?? fallback)
@@ -35,10 +35,6 @@ function safeFileName(name: string): string {
   return cleaned || "document";
 }
 
-// Supabase's Postgrest/Storage errors are real Error instances in this
-// project's SDK version, but this handles any thrown value defensively —
-// a plain object with a `.message` (or a raw string) still surfaces its
-// real reason instead of silently falling back to the generic copy.
 function describeUploadError(e: unknown): string {
   if (e instanceof Error && e.message) return e.message;
   if (typeof e === "string" && e.trim()) return e;
@@ -48,16 +44,6 @@ function describeUploadError(e: unknown): string {
   return "Something went wrong uploading that file — mind trying again?";
 }
 
-// Runs the (synchronous, sometimes slow) LearnovaAI engine inside a Web
-// Worker instead of blocking the main thread. Measured: a realistic
-// ~60,000-character upload (a combined set of notes, or one longer
-// scanned chapter) takes several seconds of pure computation — on the
-// main thread that freezes the whole upload screen for that whole time,
-// which on a phone reads as "the app just died." Falls back to running
-// on the main thread (the previous behavior) if Workers aren't
-// available, the worker fails to start, or it times out — so this can
-// never make an upload fail outright, only ever change WHERE the same
-// computation happens.
 function runAIOffMainThread(
   text: string,
   options: Parameters<typeof LearnovaAI.processDocument>[1],
@@ -124,15 +110,13 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [type, setType] = useState<MaterialType>("Notes");
-  // Tracks whether the person has explicitly tapped a category themselves —
-  // once they have, the auto-suggestion below backs off completely and
-  // never overwrites their choice.
   const [typeManuallySet, setTypeManuallySet] = useState(false);
   const [contentYear, setContentYear] = useState("");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stageIndex, setStageIndex] = useState(0);
   const [fileLabel, setFileLabel] = useState<string | null>(null);
+  const [fileSizeMB, setFileSizeMB] = useState<number | null>(null);
   const [ocrStage, setOcrStage] = useState<string | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -152,17 +136,11 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
     setDone(false);
     setBusy(true);
     setFileLabel(fileKindLabel(file));
+    setFileSizeMB(file.size / (1024 * 1024));
     setStageIndex(0);
     setOcrStage(null);
     setOcrProgress(0);
 
-    // Auto-categorize from the filename alone, unless the person already
-    // picked a category themselves before choosing the file — in which
-    // case their choice is left alone completely, both now and after the
-    // real text is extracted below. `finalType` (a plain local variable,
-    // not the `type` state — state updates don't land synchronously, so
-    // reading `type` again later in this same function would still see
-    // the old value) is what actually gets saved.
     let finalType: MaterialType = type;
     if (!typeManuallySet) {
       finalType = guessMaterialType(file.name);
@@ -170,50 +148,48 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
     }
 
     try {
-      // 1. Read — pulls whatever text we can out of literally any file
-      // type, including running OCR for scanned PDFs and photos. This
-      // never throws for "unsupported format"; a file we can't get clean
-      // text from still uploads, it just won't get auto-generated study
-      // tools (see the `quality` branch below).
-      const { text, pages, quality } = await extractDocumentText(file, (p) => {
-        setOcrStage(p.stage);
-        setOcrProgress(p.progress);
-      });
+      // ensureFileExtension() covers files (very often ones saved via
+      // WhatsApp on Android) whose name has no extension at all. This is
+      // a fast, local check (worst case reads 16 bytes off the file
+      // itself), so it happens before the parallel step below rather
+      // than adding a real delay of its own.
+      const originalName = await ensureFileExtension(safeFileName(file.name), file);
+      const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
+      const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
+
+      // Reading the document's text and uploading its raw bytes are
+      // independent of each other — both only need the original File —
+      // so they now run in parallel instead of one after another. This
+      // is what used to make uploads feel slow even for small files: a
+      // document needing OCR can take 20-30+ seconds just to read
+      // (fetching Tesseract's OCR engine over the network — see
+      // document-text.ts), during which the file itself, even a large
+      // one, now uploads in the background at the same time instead of
+      // only starting once reading finished.
+      const [{ text, pages, quality }, uploadResult] = await Promise.all([
+        extractDocumentText(file, (p) => {
+          setOcrStage(p.stage);
+          setOcrProgress(p.progress);
+        }),
+        supabase.storage.from("materials").upload(path, file),
+      ]);
+      if (uploadResult.error) throw uploadResult.error;
 
       // Refine the filename-only guess now that we have real content to
-      // look at (catches e.g. "notes.pdf" that's actually a past exam
-      // paper). Never overrides a category the person picked themselves.
+      // look at. Never overrides a category the person picked themselves.
       if (!typeManuallySet && quality !== "none") {
         finalType = guessMaterialType(file.name, text);
         setType(finalType);
       }
 
-      // 2. Upload the raw file — always happens, regardless of how well
-      // the text extraction went, so downloads always work.
-      setStageIndex(1);
-      // ensureFileExtension() covers files (very often ones saved via
-      // WhatsApp on Android) whose name has no extension at all — it
-      // tries the file's MIME type first, then reads the file's own
-      // first bytes directly if even that's blank. Without it the
-      // stored path has no dot in it anywhere, which broke the in-app
-      // preview entirely (nothing to detect the file type from at all)
-      // and left the downloaded copy unable to open correctly too.
-      const originalName = await ensureFileExtension(safeFileName(file.name), file);
-      const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
-      const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
-      const { error: uploadError } = await supabase.storage.from("materials").upload(path, file);
-      if (uploadError) throw uploadError;
-
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
 
-      // 3. Generate study tools — off the main thread via a Web Worker
-      // (see runAIOffMainThread above), so this costs nothing, needs no
-      // network round trip to any external model, and doesn't freeze the
-      // upload screen on a large document. A short/empty extraction
-      // skips this step entirely — the material is still saved either
-      // way, same as before.
-      setStageIndex(2);
+      // Generate study tools — off the main thread via a Web Worker, so
+      // this doesn't freeze the upload screen on a large document. A
+      // short/empty extraction skips this step entirely — the material
+      // is still saved either way.
+      setStageIndex(1);
       let summary: string | null = null;
       let tags: string[] = [];
       let flashcards: { question: string; answer: string; position: number }[] = [];
@@ -238,25 +214,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             position: q.position,
           })).filter((q) => q.question && q.options.length >= 2);
         } catch (e) {
-          // The engine is designed to degrade gracefully on its own and
-          // this shouldn't normally throw, but if it somehow does (or the
-          // worker AND its main-thread fallback both fail), the upload
-          // still falls through to catalog_only below rather than
-          // failing outright.
           console.error("Learnova AI processing failed:", e);
         }
       }
 
-      // 4. Catalogue it — one insert, already carrying the AI's results.
-      setStageIndex(3);
-      // Any ONE of summary/flashcards/quiz succeeding is enough to mark
-      // this "ready" — this used to require summary specifically
-      // (hasStudyTools = quality !== "none" && !!summary), which meant
-      // that if the summarizer alone came back empty, perfectly good
-      // flashcards and quiz questions that HAD been generated were
-      // thrown away too, and the whole material got filed as
-      // catalog_only. The three are independent outputs of the same
-      // run — one being weak or empty shouldn't discard the other two.
+      // Catalogue it — one insert, already carrying the AI's results.
+      setStageIndex(2);
       const hasAnyStudyTools = quality !== "none" && (!!summary || flashcards.length > 0 || quiz.length > 0);
       const { data: material, error: insertError } = await supabase
         .from("materials")
@@ -279,15 +242,6 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         .single();
       if (insertError) throw insertError;
 
-      // 5. Save the flashcards & quiz alongside it — attempted whenever
-      // extraction produced usable text at all, independently of whether
-      // the summary specifically came out non-empty (see note above).
-      // Best-effort: if either insert fails, the material itself is
-      // already safely saved above — it just opens to "no flashcards/
-      // quiz yet" instead of erroring the whole upload. (If this is
-      // still failing, check that the flashcard/quiz RLS migration
-      // actually ran against your live database via Supabase's SQL
-      // Editor.)
       if (quality !== "none") {
         if (flashcards.length) {
           const { error: fcError } = await supabase
@@ -461,7 +415,9 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             {busy
               ? stageIndex === 0 && ocrStage
                 ? "Scanned or photographed pages take longer to read — hang tight."
-                : `${fileLabel ?? "Document"} — this can take a moment, don't close the tab.`
+                : fileSizeMB && fileSizeMB > 8
+                  ? `${fileLabel ?? "Document"} (${fileSizeMB.toFixed(1)} MB) — larger files take longer on slower connections, hang tight.`
+                  : `${fileLabel ?? "Document"} — this can take a moment, don't close the tab.`
               : "PDF, Word, PowerPoint, a photo of a page, or a zip of files — we'll do our best with anything you give it."}
           </p>
           {error && <p className="mt-1 text-xs font-medium text-destructive">{error}</p>}
