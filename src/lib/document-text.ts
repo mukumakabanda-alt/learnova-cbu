@@ -16,6 +16,8 @@
 // only thing that can go wrong here is a genuinely unreadable/corrupted
 // file, and even that resolves rather than rejects.
 
+import "@/lib/polyfills"; // must load before pdf.js — see that file for why
+
 export type ExtractedDocument = {
   text: string;
   pages: number | null;
@@ -58,11 +60,6 @@ function extOf(name: string): string {
 
 function cleanWhitespace(s: string): string {
   return s
-    // Postgres JSON/text cannot store the null character. OCR, scraped
-    // binary Office files, and malformed PDFs can produce it (or other
-    // invisible control bytes), which surfaces in the upload UI as the
-    // exact database error "unsupported Unicode escape sequence". Strip
-    // those at the extraction boundary so every downstream insert is safe.
     .replace(/\u0000/g, "")
     .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
     .replace(/[\uD800-\uDFFF]/g, "")
@@ -79,10 +76,6 @@ function qualityOf(text: string): ExtractedDocument["quality"] {
   return "none";
 }
 
-// Races any promise against a bounded timeout — used around the
-// network-dependent steps (OCR engine + language download, and each
-// page's OCR pass) that have no natural upper bound of their own. See
-// the comment on OCR_INIT_TIMEOUT_MS above for why this exists.
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
@@ -99,13 +92,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-// Last-resort fallback for formats we can't truly parse — legacy binary
-// .doc/.ppt/.xls, or anything unrecognized. This is NOT real parsing, it's
-// a byte-level scrape for runs of printable characters (ASCII and naive
-// UTF-16LE, since old Office binary formats store a lot of their text as
-// long contiguous UTF-16LE runs). It recovers a surprising amount in
-// practice, and — critically — it means we never have to say "we can't
-// read this," just sometimes "here's a rougher summary than usual."
 function scrapePrintableStrings(buffer: ArrayBuffer, minRun = 4): string {
   const bytes = new Uint8Array(buffer);
   const runs: string[] = [];
@@ -119,7 +105,7 @@ function scrapePrintableStrings(buffer: ArrayBuffer, minRun = 4): string {
     const printable = b >= 32 && b <= 126;
     if (printable) {
       current += String.fromCharCode(b);
-      if (bytes[i + 1] === 0) i++; // skip the null byte of a UTF-16LE pair
+      if (bytes[i + 1] === 0) i++;
     } else {
       flush();
     }
@@ -127,12 +113,6 @@ function scrapePrintableStrings(buffer: ArrayBuffer, minRun = 4): string {
   flush();
   return cleanWhitespace(runs.join(" "));
 }
-
-// ── OCR context ──────────────────────────────────────────────────────
-// Shared across one whole extractDocumentText() call so a scanned
-// multi-page PDF, or a zip full of photos, only pays the ~2-5MB OCR
-// engine + language download ONCE, via a single reused worker, instead
-// of once per page/image.
 
 type OcrCtx = {
   onProgress?: (p: OcrProgress) => void;
@@ -190,8 +170,6 @@ async function terminateOcrWorker(ctx: OcrCtx) {
   }
 }
 
-// Renders a PDF page to a canvas at a resolution good for OCR without
-// ballooning memory on an oversized page (e.g. an A0 poster PDF).
 async function renderPdfPageToCanvas(pdf: any, pageNumber: number): Promise<HTMLCanvasElement> {
   const page = await pdf.getPage(pageNumber);
   const base = page.getViewport({ scale: 1 });
@@ -235,9 +213,6 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
   text = cleanWhitespace(text);
   if (qualityOf(text) !== "none") return { text, pages: pdf.numPages, quality: qualityOf(text) };
 
-  // No embedded text layer at all — almost certainly a scanned PDF (every
-  // page is really just a photo). Fall back to OCR, page by page, sharing
-  // one Tesseract worker for the whole document.
   if (ctx.budget.remaining <= 0) return { text: "", pages: pdf.numPages, quality: "none" };
 
   const worker = await getOcrWorker(ctx);
@@ -333,14 +308,14 @@ async function extractZip(file: File | Blob, ctx: OcrCtx, depth = 0): Promise<Ex
         const ab = await entry.async("arraybuffer");
         innerText = (await extractZip(new Blob([ab]), ctx, depth + 1)).text;
       } else {
-        continue; // other binaries — skip quietly, not an error
+        continue;
       }
       if (innerText.trim()) {
         parts.push(`=== ${name} ===\n${innerText}`);
         sources.push(name);
       }
     } catch {
-      continue; // one bad entry shouldn't sink the whole zip
+      continue;
     }
   }
 
@@ -378,8 +353,6 @@ async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<Extrac
     return { text, pages: null, quality: qualityOf(text) };
   }
 
-  // Unrecognized extension: try as plain text first (covers a lot of
-  // code/config files), fall back to the byte scrape if that's noise.
   const asText = cleanWhitespace(await file.text().catch(() => ""));
   if (qualityOf(asText) !== "none") return { text: asText, pages: null, quality: qualityOf(asText) };
   const scraped = scrapePrintableStrings(await file.arrayBuffer());
@@ -435,13 +408,6 @@ export function fileKindLabel(file: File): string {
 const MATERIAL_TYPE_VALUES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
 export type GuessableMaterialType = (typeof MATERIAL_TYPE_VALUES)[number];
 
-// Keyword → type, checked in order (first match wins). Applied to both the
-// filename and (once available) the first slice of extracted text, so a
-// file named "notes.pdf" whose first page reads "FINAL EXAMINATION —
-// MAY 2023" still gets correctly caught as a past paper. Deliberately
-// simple and explainable rather than a model call: the whole point is an
-// instant, free, on-device first guess the person can immediately see and
-// override with one tap — not a perfect classifier.
 const TYPE_KEYWORDS: { type: GuessableMaterialType; patterns: RegExp[] }[] = [
   {
     type: "Past Paper",
@@ -473,18 +439,15 @@ const TYPE_KEYWORDS: { type: GuessableMaterialType; patterns: RegExp[] }[] = [
  * Best-effort first guess at a material's category, from its filename and
  * (optionally) a short slice of its extracted text — never throws, never
  * returns anything outside the six real categories, and defaults to
- * "Notes" when nothing matches (the safest, most common default; this is
- * a starting point the uploader can change with one tap, not a final answer).
+ * "Notes" when nothing matches.
  */
 export function guessMaterialType(filename: string, textSample?: string): GuessableMaterialType {
   const extensionHint = extOf(filename);
   if (["ppt", "pptx"].includes(extensionHint)) return "Slides";
 
-  // Filename first — the strongest, cheapest signal, and available
-  // instantly (before OCR/extraction even starts).
   const haystacks = [filename, textSample ? textSample.slice(0, 1500) : ""];
   for (const { type, patterns } of TYPE_KEYWORDS) {
     if (haystacks.some((h) => h && patterns.some((p) => p.test(h)))) return type;
   }
   return "Notes";
-             }
+      }
