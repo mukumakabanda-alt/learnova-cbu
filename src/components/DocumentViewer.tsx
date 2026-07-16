@@ -5,22 +5,17 @@
 // document-text.ts) instead of an <iframe src="..."> pointed at a blob:
 // or signed URL. That approach depends on the browser's own built-in PDF
 // viewer deciding to render the resource inline rather than treat it as
-// a completed download — which turned out to be inconsistent (some
-// environments showed their own "tap to open" download card instead of
-// rendering, which does nothing when tapped since there's no app to hand
-// it to inside an embedded webview). Drawing the pages ourselves removes
-// that decision from the picture entirely: there is no download to
-// trigger, no Content-Type/Content-Disposition ambiguity, nothing handed
-// off anywhere — just pixels on a canvas we control. Plain text is read
-// and shown directly for the same reason. Images keep using <img>, which
-// never had this problem (browsers don't make an "is this a download"
-// decision for image tags).
+// a completed download — which turned out to be inconsistent. Drawing
+// the pages ourselves removes that decision from the picture entirely:
+// there is no download to trigger, nothing handed off anywhere — just
+// pixels on a canvas we control. Plain text is read and shown directly
+// for the same reason. Images keep using <img>, which never had this
+// problem.
 //
 // Online, it always prefers a fresh copy; offline, or if the network
 // request fails, it falls back to whatever's cached in the Offline
 // Library (see src/lib/offline.ts) — using the exact same rendering path
-// either way, so a downloaded document looks and behaves identically
-// online or off.
+// either way.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -44,6 +39,13 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [truncated, setTruncated] = useState<{ shown: number; total: number } | null>(null);
+  // The real underlying reason, surfaced instead of a generic message —
+  // this is the difference between guessing what's wrong and actually
+  // knowing. Distinguishes, for example, "the stored file is 0 bytes"
+  // (an upload/storage problem) from a genuine PDF parsing error (a
+  // malformed or unusual file) from a worker-loading failure (an
+  // environment/asset-serving problem, not the file at all).
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +53,10 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
 
     async function render() {
       try {
+        if (blob.size < 100) {
+          throw new Error(`The stored file is only ${blob.size} bytes — the upload itself likely never completed; this isn't a rendering problem.`);
+        }
+
         const [pdfjsLib, workerUrlMod] = await Promise.all([
           import("pdfjs-dist"),
           import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
@@ -86,7 +92,10 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
         if (!cancelled) setStatus("ready");
       } catch (e) {
         console.error("PDF render failed:", e);
-        if (!cancelled) setStatus("error");
+        if (!cancelled) {
+          setErrorDetail(e instanceof Error ? e.message : String(e));
+          setStatus("error");
+        }
       }
     }
 
@@ -98,7 +107,7 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
   }, [blob]);
 
   if (status === "error") {
-    return <ViewerMessage icon={FileWarning} text="Couldn't render this PDF — try downloading it instead." />;
+    return <ViewerMessage icon={FileWarning} text="Couldn't render this PDF — try downloading it instead." detail={errorDetail} />;
   }
 
   return (
@@ -211,9 +220,6 @@ export function DocumentViewer({
         setKind(resolvedKind);
 
         if (resolvedKind === "office" || resolvedKind === "none") {
-          // Google's viewer fetches this from its own servers, so it
-          // needs a real reachable URL. "none" renders nothing, so the
-          // URL is unused but harmless to keep around.
           setOfficeUrl(signed);
           return;
         }
@@ -262,8 +268,6 @@ export function DocumentViewer({
     try {
       let blob: Blob;
       if (previewBlob) {
-        // Already have the bytes from rendering the preview — reuse
-        // them instead of fetching the same file again.
         downloadBlob(previewBlob, originalFileName(filePath, title));
         blob = previewBlob;
       } else {
@@ -389,13 +393,16 @@ export function DocumentViewer({
   );
 }
 
-function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: string }) {
+function ViewerMessage({ icon: Icon, text, detail }: { icon: typeof FileWarning; text: string; detail?: string | null }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-2xl bg-surface text-copper">
         <Icon className="h-6 w-6" />
       </div>
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
+      {detail && (
+        <p className="max-w-xs rounded-lg bg-surface px-3 py-2 font-mono text-[11px] text-muted-foreground/70">{detail}</p>
+      )}
     </div>
   );
-          }
+    }
