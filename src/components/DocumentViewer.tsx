@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, FileQuestion, Check, CloudOff } from "lucide-react";
 import { toast } from "sonner";
-import { getViewUrl, forceDownload, previewKind, previewKindFromMime, type PreviewKind } from "@/lib/document-files";
+import { getViewUrl, forceDownload, previewKind, previewKindFromMime, sniffContentType, sniffFileSignature, type PreviewKind } from "@/lib/document-files";
 import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOfflineFromDownload, getOfflineFileUrl, touchLastOpened, useOfflineStatus } from "@/lib/offline";
@@ -82,9 +82,18 @@ export function DocumentViewer({
         setUrl(signed);
         touchLastOpened(materialId);
         if (previewKind(filePath) === "none") {
-          const { sniffContentType } = await import("@/lib/document-files");
           const mime = await sniffContentType(signed);
-          if (active) setSniffedKind(previewKindFromMime(mime));
+          let detected = previewKindFromMime(mime);
+          if (detected === "none") {
+            // Content-Type sniffing also came up empty (Storage has this
+            // one recorded as a generic type, e.g. application/octet-
+            // stream, because the browser couldn't detect a MIME type at
+            // upload time either) — read the file's own first bytes
+            // directly, which works regardless of what any browser ever
+            // reported about it.
+            detected = await sniffFileSignature(signed);
+          }
+          if (active) setSniffedKind(detected);
         }
       } catch {
         const usedCache = await useOfflineCopy();
@@ -249,4 +258,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-    }
+                                                }
