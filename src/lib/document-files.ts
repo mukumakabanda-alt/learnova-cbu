@@ -34,13 +34,6 @@ const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 const TEXT_EXTS = new Set(["txt", "md", "csv", "json", "log"]);
 const OFFICE_EXTS = new Set(["doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf"]);
 
-// Maps a MIME type to the extension this app would give a file of that
-// type — used in two places: ensureFileExtension() below, to give a
-// proper extension to files whose original name had none at all (very
-// common for photos/documents saved via WhatsApp on Android, which
-// frequently strips it entirely); and previewKindFromMime() further
-// down, as a fallback for files that were already stored that way
-// before this existed.
 const MIME_TO_EXTENSION: Record<string, string> = {
   "application/pdf": "pdf",
   "image/jpeg": "jpg",
@@ -66,18 +59,72 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "application/x-zip-compressed": "zip",
 };
 
-// Ensures a filename ends in a real extension, inferring one from its
-// MIME type when it doesn't already have one. Without this, a file saved
-// via WhatsApp on Android (which often strips the extension entirely)
-// got stored with a path like ".../a1b2c3-580085" — no dot anywhere —
-// which meant previewKind() below had nothing to go on and always fell
-// back to "no inline preview," even for a perfectly normal photo or PDF,
-// and the downloaded copy on the person's own phone had the same
-// problem opening it correctly.
-export function ensureFileExtension(filename: string, mimeType: string): string {
+// Identifies a file from its first bytes ("magic numbers") — the actual
+// format signature every real file format writes at its start,
+// regardless of what any browser reported for its name or MIME type.
+// Last-resort fallback, for the case a file has neither a usable
+// extension NOR a usable MIME type — no dot in its stored filename, AND
+// Storage recorded it as a generic type like application/octet-stream
+// because the browser couldn't detect one at upload time either. Both
+// do happen for files saved via WhatsApp on Android.
+function kindFromMagicBytes(bytes: Uint8Array): PreviewKind {
+  const b = (n: number) => bytes[n] ?? -1;
+  if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) return "pdf"; // %PDF
+  if (b(0) === 0xff && b(1) === 0xd8 && b(2) === 0xff) return "image"; // JPEG
+  if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4e && b(3) === 0x47) return "image"; // PNG
+  if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46) return "image"; // GIF
+  if (b(0) === 0x42 && b(1) === 0x4d) return "image"; // BMP
+  if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46) return "image"; // RIFF container — WEBP, in this app's context
+  if (b(0) === 0x50 && b(1) === 0x4b && (b(2) === 0x03 || b(2) === 0x05 || b(2) === 0x07)) return "office"; // ZIP-based: docx/pptx/xlsx
+  return "none";
+}
+
+/** Reads a local File's first bytes and identifies its real type directly — no network needed, used at upload time. See kindFromMagicBytes above. */
+export async function sniffLocalFileKind(file: File | Blob): Promise<PreviewKind> {
+  try {
+    const buffer = await file.slice(0, 16).arrayBuffer();
+    return kindFromMagicBytes(new Uint8Array(buffer));
+  } catch {
+    return "none";
+  }
+}
+
+/** A tiny Range request against a signed URL — reads only the first 16 bytes, never the whole file. Final fallback when a stored file has neither a usable extension nor a usable Content-Type. See kindFromMagicBytes above. */
+export async function sniffFileSignature(url: string): Promise<PreviewKind> {
+  try {
+    const response = await fetch(url, { headers: { Range: "bytes=0-15" } });
+    const buffer = await response.arrayBuffer();
+    return kindFromMagicBytes(new Uint8Array(buffer));
+  } catch {
+    return "none";
+  }
+}
+
+const KIND_TO_EXTENSION: Record<Exclude<PreviewKind, "none">, string> = {
+  pdf: "pdf",
+  image: "jpg",
+  office: "zip", // a bare ZIP signature could be docx/pptx/xlsx/zip — "zip" is an honest default when we can't tell which specifically
+  text: "txt",
+};
+
+// Ensures a filename ends in a real extension. Tries, in order: the
+// filename's own extension (if it already has one) → the file's MIME
+// type → the file's own first bytes directly. That third step is what's
+// new — without it, a file whose browser-reported MIME type was ALSO
+// blank (not just its filename) still got stored with a path like
+// ".../a1b2c3-360773" — no dot anywhere, and no useful Content-Type to
+// fall back on later either — which is exactly what "no inline preview"
+// for a totally normal file turns out to be.
+export async function ensureFileExtension(filename: string, file: File): Promise<string> {
   if (/\.[a-zA-Z0-9]{1,8}$/.test(filename)) return filename;
-  const inferred = MIME_TO_EXTENSION[mimeType.split(";")[0].trim().toLowerCase()];
-  return inferred ? `${filename}.${inferred}` : filename;
+
+  const fromMime = MIME_TO_EXTENSION[file.type.split(";")[0].trim().toLowerCase()];
+  if (fromMime) return `${filename}.${fromMime}`;
+
+  const sniffed = await sniffLocalFileKind(file);
+  if (sniffed !== "none") return `${filename}.${KIND_TO_EXTENSION[sniffed]}`;
+
+  return filename;
 }
 
 // Decides how the in-website viewer should render a file. PDFs and images
@@ -96,9 +143,9 @@ export function previewKind(filePath: string): PreviewKind {
 }
 
 // Fallback for previewKind() when the stored path has no recognizable
-// extension (see ensureFileExtension above). Used both for a live
-// Content-Type sniff (see sniffContentType below) and for a cached
-// offline blob's own .type — same function either way.
+// extension. Used both for a live Content-Type sniff (see
+// sniffContentType below) and for a cached offline blob's own .type —
+// same function either way.
 export function previewKindFromMime(mime: string | null): PreviewKind {
   if (!mime) return "none";
   const type = mime.split(";")[0].trim().toLowerCase();
@@ -216,4 +263,4 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
   }
 
   return blob;
-  }
+}
