@@ -8,9 +8,15 @@
 // browsers, in some embedding contexts, treat a directly-linked file as
 // something to hand off externally rather than render inline, which
 // looked exactly like "View triggers a download instead of a preview."
-// A blob: URL has no such ambiguity. Online, it always prefers a fresh
-// copy; offline, or if the network request fails, it falls back to
-// whatever's cached in the Offline Library (see src/lib/offline.ts).
+// Critically, the blob is also re-typed to match whatever kind we've
+// already determined the file really is (extension → Content-Type →
+// magic bytes) — the raw fetch response's own Content-Type can be just
+// as wrong/generic as the stored filename was for extensionless files,
+// and a blob the browser doesn't recognize as application/pdf won't
+// render inline in an iframe no matter how it got there. Online, it
+// always prefers a fresh copy; offline, or if the network request
+// fails, it falls back to whatever's cached in the Offline Library (see
+// src/lib/offline.ts).
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -24,6 +30,18 @@ import {
 import { useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOfflineFromDownload, getOfflineFileUrl, touchLastOpened, useOfflineStatus } from "@/lib/offline";
+
+// The MIME type to force onto a fetched blob for each kind, regardless
+// of what the network response itself reported. PDF is the critical
+// one — an iframe only hands rendering to the browser's built-in PDF
+// viewer for a blob: URL that's actually typed application/pdf; text is
+// corrected for the same reason; images are left alone, since browsers
+// reliably sniff the real image format from the bytes themselves
+// regardless of the declared type, so there's nothing to fix there.
+const RENDER_MIME: Partial<Record<PreviewKind, string>> = {
+  pdf: "application/pdf",
+  text: "text/plain;charset=utf-8",
+};
 
 export function DocumentViewer({
   open,
@@ -53,10 +71,6 @@ export function DocumentViewer({
   const [downloading, setDownloading] = useState(false);
   const [kind, setKind] = useState<PreviewKind | null>(null);
   const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
-  // The already-fetched bytes behind the preview, if this is a PDF/
-  // image/text file rendered from a local blob (see below) — reused by
-  // handleDownload so tapping Download right after previewing doesn't
-  // fetch the same file twice.
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
 
   useEffect(() => {
@@ -112,11 +126,15 @@ export function DocumentViewer({
         }
 
         // pdf / image / text: fetch the bytes and render from a local
-        // blob: URL — see the file-level comment above for why.
+        // blob: URL, re-typed to match what we've already determined —
+        // see the RENDER_MIME comment above for why this specific part
+        // is what was actually still broken.
         const response = await fetch(signed);
         if (!response.ok) throw new Error(`status ${response.status}`);
-        const blob = await response.blob();
+        const rawBlob = await response.blob();
         if (!active) return;
+        const forcedType = RENDER_MIME[resolvedKind];
+        const blob = forcedType && forcedType !== rawBlob.type ? new Blob([rawBlob], { type: forcedType }) : rawBlob;
         localBlobUrl = URL.createObjectURL(blob);
         setPreviewBlob(blob);
         setUrl(localBlobUrl);
@@ -152,8 +170,6 @@ export function DocumentViewer({
     try {
       let blob: Blob;
       if (previewBlob) {
-        // Already have the bytes from rendering the preview — reuse
-        // them instead of fetching the same file again.
         downloadBlob(previewBlob, originalFileName(filePath, title));
         blob = previewBlob;
       } else {
@@ -286,4 +302,4 @@ function ViewerMessage({ icon: Icon, text }: { icon: typeof FileWarning; text: s
       <p className="max-w-xs text-sm text-muted-foreground">{text}</p>
     </div>
   );
-            }
+  }
