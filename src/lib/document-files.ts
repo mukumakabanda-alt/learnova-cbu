@@ -1,38 +1,38 @@
 // Shared file-handling helpers for uploaded material documents.
-//
-// Every place in the app that lets someone view or download a material's
-// underlying file (StudyPanel, the course page, the study catalogue, the
-// dashboard) used to carry its own copy of this logic, and they'd drifted
-// out of sync — one of them (the course page) opened a popup *after* an
-// `await`, which mobile browsers silently block, which is exactly what
-// "I tap it and nothing happens" looks like. Centralising it here means
-// view/download behave identically everywhere, and there's one place to
-// fix it if Storage's behaviour ever changes.
+// Centralised view/download/type detection so StudyPanel, course page,
+// catalogue, and DocumentViewer all behave identically.
 
 import { supabase } from "@/integrations/supabase/client";
 
-// Uploads are stored at `${userId}/${crypto.randomUUID()}-${originalName}`.
-// A v4 UUID is always exactly 36 characters, so everything after that
-// (plus the separating hyphen) is the real original filename — used so a
-// forced download saves as "Macro Notes Week 3.pdf" instead of a bare
-// UUID with no extension a person can't recognise in their Downloads folder.
 export function originalFileName(filePath: string, fallbackTitle: string): string {
   const base = filePath.split("/").pop() ?? "";
+  // Storage path: `${userId}/${uuid}-${originalName}` — uuid is 36 chars, then '-'
   const name = base.length > 37 ? base.slice(37) : base;
   return name || fallbackTitle;
 }
 
 function fileExtension(filePath: string): string {
-  const name = filePath.split("/").pop() ?? "";
+  const name = (filePath.split("/").pop() ?? "").split("?")[0];
   const dot = name.lastIndexOf(".");
   return dot === -1 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
-export type PreviewKind = "pdf" | "image" | "text" | "office" | "none";
+export type PreviewKind =
+  | "pdf"
+  | "image"
+  | "text"
+  | "docx"
+  | "pptx"
+  | "xlsx"
+  | "video"
+  | "audio"
+  | "office" // legacy .doc/.ppt/.xls we can't fully render in-app
+  | "none";
 
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
-const TEXT_EXTS = new Set(["txt", "md", "csv", "json", "log"]);
-const OFFICE_EXTS = new Set(["doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf"]);
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+const TEXT_EXTS = new Set(["txt", "md", "csv", "json", "log", "rtf"]);
+const VIDEO_EXTS = new Set(["mp4", "webm", "ogg", "mov", "m4v"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac"]);
 
 const MIME_TO_EXTENSION: Record<string, string> = {
   "application/pdf": "pdf",
@@ -44,6 +44,7 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "image/svg+xml": "svg",
   "image/heic": "heic",
   "image/heif": "heif",
+  "image/avif": "avif",
   "text/plain": "txt",
   "text/markdown": "md",
   "text/csv": "csv",
@@ -55,23 +56,39 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "application/vnd.ms-excel": "xls",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "application/rtf": "rtf",
-  "application/zip": "zip",
-  "application/x-zip-compressed": "zip",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/ogg": "ogg",
+  "video/quicktime": "mov",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/ogg": "ogg",
+  "audio/mp4": "m4a",
 };
 
 function kindFromMagicBytes(bytes: Uint8Array): PreviewKind {
   const b = (n: number) => bytes[n] ?? -1;
-  if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) return "pdf"; // %PDF
-  if (b(0) === 0xff && b(1) === 0xd8 && b(2) === 0xff) return "image"; // JPEG
-  if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4e && b(3) === 0x47) return "image"; // PNG
-  if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46) return "image"; // GIF
-  if (b(0) === 0x42 && b(1) === 0x4d) return "image"; // BMP
-  if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46) return "image"; // RIFF container — WEBP, in this app's context
-  if (b(0) === 0x50 && b(1) === 0x4b && (b(2) === 0x03 || b(2) === 0x05 || b(2) === 0x07)) return "office"; // ZIP-based: docx/pptx/xlsx
+  // %PDF
+  if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) return "pdf";
+  // JPEG
+  if (b(0) === 0xff && b(1) === 0xd8 && b(2) === 0xff) return "image";
+  // PNG
+  if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4e && b(3) === 0x47) return "image";
+  // GIF
+  if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46) return "image";
+  // BMP
+  if (b(0) === 0x42 && b(1) === 0x4d) return "image";
+  // WEBP (RIFF....WEBP)
+  if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46) return "image";
+  // MP4/MOV (ftyp at offset 4)
+  if (b(4) === 0x66 && b(5) === 0x74 && b(6) === 0x79 && b(7) === 0x70) return "video";
+  // ZIP-based office (docx/pptx/xlsx) — refine later by extension/mime
+  if (b(0) === 0x50 && b(1) === 0x4b && (b(2) === 0x03 || b(2) === 0x05 || b(2) === 0x07)) {
+    return "office";
+  }
   return "none";
 }
 
-/** Reads a local File's first bytes and identifies its real type directly — no network needed, used at upload time. */
 export async function sniffLocalFileKind(file: File | Blob): Promise<PreviewKind> {
   try {
     const buffer = await file.slice(0, 16).arrayBuffer();
@@ -81,7 +98,6 @@ export async function sniffLocalFileKind(file: File | Blob): Promise<PreviewKind
   }
 }
 
-/** A tiny Range request against a signed URL — reads only the first 16 bytes, never the whole file. Final fallback when a stored file has neither a usable extension nor a usable Content-Type. */
 export async function sniffFileSignature(url: string): Promise<PreviewKind> {
   try {
     const response = await fetch(url, { headers: { Range: "bytes=0-15" } });
@@ -92,11 +108,15 @@ export async function sniffFileSignature(url: string): Promise<PreviewKind> {
   }
 }
 
-const KIND_TO_EXTENSION: Record<Exclude<PreviewKind, "none">, string> = {
+const KIND_TO_EXTENSION: Record<Exclude<PreviewKind, "none" | "office">, string> = {
   pdf: "pdf",
   image: "jpg",
-  office: "zip",
   text: "txt",
+  docx: "docx",
+  pptx: "pptx",
+  xlsx: "xlsx",
+  video: "mp4",
+  audio: "mp3",
 };
 
 export async function ensureFileExtension(filename: string, file: File): Promise<string> {
@@ -104,7 +124,8 @@ export async function ensureFileExtension(filename: string, file: File): Promise
   const fromMime = MIME_TO_EXTENSION[file.type.split(";")[0].trim().toLowerCase()];
   if (fromMime) return `${filename}.${fromMime}`;
   const sniffed = await sniffLocalFileKind(file);
-  if (sniffed !== "none") return `${filename}.${KIND_TO_EXTENSION[sniffed]}`;
+  if (sniffed !== "none" && sniffed !== "office") return `${filename}.${KIND_TO_EXTENSION[sniffed]}`;
+  if (sniffed === "office") return `${filename}.docx`;
   return filename;
 }
 
@@ -113,7 +134,12 @@ export function previewKind(filePath: string): PreviewKind {
   if (ext === "pdf") return "pdf";
   if (IMAGE_EXTS.has(ext)) return "image";
   if (TEXT_EXTS.has(ext)) return "text";
-  if (OFFICE_EXTS.has(ext)) return "office";
+  if (ext === "docx") return "docx";
+  if (ext === "pptx") return "pptx";
+  if (ext === "xlsx") return "xlsx";
+  if (ext === "doc" || ext === "ppt" || ext === "xls") return "office";
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
   return "none";
 }
 
@@ -123,18 +149,52 @@ export function previewKindFromMime(mime: string | null): PreviewKind {
   if (type === "application/pdf") return "pdf";
   if (type.startsWith("image/")) return "image";
   if (type.startsWith("text/")) return "text";
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("audio/")) return "audio";
+  if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
+  if (type === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "pptx";
+  if (type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
   if (
     type === "application/msword" ||
-    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     type === "application/vnd.ms-powerpoint" ||
-    type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
     type === "application/vnd.ms-excel" ||
-    type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
     type === "application/rtf"
   ) {
     return "office";
   }
   return "none";
+}
+
+/** Prefer extension → mime → magic bytes. Also upgrades generic "office" zip kinds. */
+export function refinePreviewKind(
+  kind: PreviewKind,
+  filePath: string | null,
+  mime: string | null,
+): PreviewKind {
+  if (kind === "pdf" || kind === "image" || kind === "text" || kind === "video" || kind === "audio") {
+    return kind;
+  }
+  if (kind === "docx" || kind === "pptx" || kind === "xlsx") return kind;
+
+  const fromExt = filePath ? previewKind(filePath) : "none";
+  if (fromExt !== "none" && fromExt !== "office") return fromExt;
+
+  const fromMime = previewKindFromMime(mime);
+  if (fromMime !== "none" && fromMime !== "office") return fromMime;
+
+  if (kind === "office" || fromExt === "office" || fromMime === "office") {
+    const ext = filePath ? fileExtension(filePath) : "";
+    if (ext === "docx") return "docx";
+    if (ext === "pptx") return "pptx";
+    if (ext === "xlsx") return "xlsx";
+    return "office";
+  }
+
+  if (kind === "none") {
+    if (fromExt !== "none") return fromExt;
+    return fromMime;
+  }
+  return kind;
 }
 
 export async function sniffContentType(url: string): Promise<string | null> {
@@ -149,7 +209,9 @@ export async function sniffContentType(url: string): Promise<string | null> {
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 export async function getViewUrl(filePath: string): Promise<string> {
-  const { data, error } = await supabase.storage.from("materials").createSignedUrl(filePath, SIGNED_URL_TTL_SECONDS);
+  const { data, error } = await supabase.storage
+    .from("materials")
+    .createSignedUrl(filePath, SIGNED_URL_TTL_SECONDS);
   if (error || !data) throw error ?? new Error("Couldn't create a link for that file.");
   return data.signedUrl;
 }
@@ -162,7 +224,9 @@ async function getDownloadUrl(filePath: string, filename: string): Promise<strin
   return data.signedUrl;
 }
 
-export async function fetchFileForOffline(filePath: string): Promise<{ blob: Blob; mime: string } | null> {
+export async function fetchFileForOffline(
+  filePath: string,
+): Promise<{ blob: Blob; mime: string } | null> {
   try {
     const url = await getViewUrl(filePath);
     const response = await fetch(url);
@@ -174,11 +238,6 @@ export async function fetchFileForOffline(filePath: string): Promise<{ blob: Blo
   }
 }
 
-// Triggers a save-to-device download from an ALREADY-fetched Blob — no
-// network fetch. Split out of forceDownload() below so the document
-// viewer can reuse bytes it already fetched to render the preview,
-// instead of downloading the same file twice — real bandwidth on mobile
-// data otherwise.
 export function downloadBlob(blob: Blob, filename: string): void {
   const blobUrl = URL.createObjectURL(blob);
   try {
@@ -194,20 +253,6 @@ export function downloadBlob(blob: Blob, filename: string): void {
   }
 }
 
-// Forces an actual save-to-device download (never an inline preview),
-// and returns the downloaded Blob so a caller can also cache it for
-// offline use without fetching the same bytes twice.
-//
-// Fetches the file into memory first and downloads from a same-origin
-// blob: URL, rather than pointing an anchor straight at the (cross-
-// origin) Storage URL. A plain cross-origin anchor click is what a
-// number of mobile browsers — Safari on iOS in particular, and Android
-// in-app browsers like WhatsApp/Facebook/Instagram's built-in browser —
-// quietly turn into "just open/navigate to the file" instead of a real
-// download, no matter what the `download` attribute or the signed URL's
-// Content-Disposition header say. Downloading the bytes first and
-// handing the browser a blob: URL (always same-origin, always local) is
-// what makes the save-to-device behaviour reliable everywhere.
 export async function forceDownload(filePath: string, fallbackTitle: string): Promise<Blob> {
   const filename = originalFileName(filePath, fallbackTitle);
   const url = await getDownloadUrl(filePath, filename);
@@ -216,4 +261,4 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
   const blob = await response.blob();
   downloadBlob(blob, filename);
   return blob;
-                             }
+    }
