@@ -5,7 +5,6 @@ type CourseCardData = {
   code: string;
   title: string;
   year: number;
-  semester: number;
   programmes?: { name: string; school: string } | null;
 };
 
@@ -20,7 +19,7 @@ export function CourseCard({ course }: { course: CourseCardData }) {
         <div className="min-w-0">
           <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary">{course.code}</span>
           <h3 className="mt-2 truncate text-base font-semibold text-foreground">{course.title}</h3>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{course.programmes?.name ?? "—"} · Year {course.year} · Sem {course.semester}</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{course.programmes?.name ?? "—"} · Year {course.year}</p>
         </div>
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface-muted text-copper"><FileText className="h-4 w-4" /></div>
       </div>
