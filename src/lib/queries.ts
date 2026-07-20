@@ -407,6 +407,26 @@ export function usePopularCourses(limit = 6) {
   });
 }
 
+// Same shape as usePopularMaterials, ordered by recency instead of
+// engagement — powers the homepage's "Recently added," which answers a
+// different question ("is this library actually alive?") than
+// "popular" does ("what's proven useful?").
+export function useRecentMaterials(limit = 8) {
+  return useQuery({
+    queryKey: ["recent-materials", limit],
+    queryFn: async (): Promise<MaterialWithCourse[]> => {
+      const { data, error } = await supabase
+        .from("materials")
+        .select("*, courses(title, code, programme_code)")
+        .in("status", ["ready", "processing", "catalog_only"])
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? []) as MaterialWithCourse[];
+    },
+  });
+}
+
 // ── YouTube recommendations ─────────────────────────────────────────────
 // Deliberately soft-fails to an empty list — missing YOUTUBE_API_KEY,
 // quota errors, or an empty query all resolve to [] rather than
@@ -472,9 +492,9 @@ export function useCreateRequest() {
 }
 
 // Despite the name, this returns every request regardless of status —
-// admin.tsx used to filter to "open" client-side. The new Requests tab
-// needs the full history (fulfilled/closed too), so the filtering now
-// happens in the component instead, same data source.
+// admin.tsx used to filter to "open" client-side. The Requests tab needs
+// the full history (fulfilled/closed too), so the filtering now happens
+// in the component instead, same data source.
 export function useOpenRequests() {
   const { user, isAdmin } = useAuth();
   return useQuery({
