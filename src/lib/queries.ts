@@ -471,6 +471,10 @@ export function useCreateRequest() {
   });
 }
 
+// Despite the name, this returns every request regardless of status —
+// admin.tsx used to filter to "open" client-side. The new Requests tab
+// needs the full history (fulfilled/closed too), so the filtering now
+// happens in the component instead, same data source.
 export function useOpenRequests() {
   const { user, isAdmin } = useAuth();
   return useQuery({
@@ -484,6 +488,21 @@ export function useOpenRequests() {
       return (data ?? []) as RequestWithCourse[];
     },
     enabled: !!user && isAdmin,
+  });
+}
+
+// Update a request's status and/or leave yourself a note — "flag for
+// later" just means adding a note while leaving it open, rather than a
+// fourth status, so it still shows up in the open queue with context.
+export function useUpdateMaterialRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; status?: "open" | "fulfilled" | "closed"; notes?: string | null }) => {
+      const { id, ...fields } = input;
+      const { error } = await supabase.from("material_requests").update(fields).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }),
   });
 }
 
@@ -563,7 +582,6 @@ export function useUpdateProfile() {
       school?: string;
       programmeCode?: string;
       year?: number;
-      semester?: 1 | 2;
       phone?: string | null;
     }) => {
       if (!user) throw new Error("Sign in first.");
@@ -575,7 +593,6 @@ export function useUpdateProfile() {
           ...(input.school !== undefined ? { school: input.school } : {}),
           ...(input.programmeCode !== undefined ? { programme_code: input.programmeCode } : {}),
           ...(input.year !== undefined ? { year: input.year } : {}),
-          ...(input.semester !== undefined ? { semester: input.semester } : {}),
           ...(input.phone !== undefined ? { phone: input.phone } : {}),
         })
         .eq("id", user.id);
@@ -590,11 +607,11 @@ export function useCreateCourse() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
-      code: string; title: string; programmeCode: string; year: number; semester: 1 | 2; lecturer?: string; description?: string;
+      code: string; title: string; programmeCode: string; year: number; lecturer?: string; description?: string;
     }) => {
       const { error } = await supabase.from("courses").insert({
         code: input.code, title: input.title, programme_code: input.programmeCode,
-        year: input.year, semester: input.semester, lecturer: input.lecturer, description: input.description ?? "",
+        year: input.year, lecturer: input.lecturer, description: input.description ?? "",
       });
       if (error) throw error;
     },
@@ -603,8 +620,8 @@ export function useCreateCourse() {
 }
 
 // Edit an EXISTING course's outline (title, lecturer, description,
-// topics, programme, year/semester) — the admin panel previously could
-// only create new courses, never touch ones already in the catalogue.
+// topics, programme, year) — the admin panel previously could only
+// create new courses, never touch ones already in the catalogue.
 export function useUpdateCourse() {
   const qc = useQueryClient();
   return useMutation({
@@ -613,7 +630,6 @@ export function useUpdateCourse() {
       title?: string;
       programmeCode?: string;
       year?: number;
-      semester?: 1 | 2;
       lecturer?: string | null;
       description?: string;
       topics?: string[];
@@ -645,7 +661,7 @@ export function useDeleteCourse() {
 // deliberately excludes anything an ordinary visitor shouldn't see, but
 // an admin managing the catalogue needs to see (and fix) failed uploads
 // too, which is exactly what the "Owners and admins view all their
-// materials" RLS policy (see the new migration) now allows.
+// materials" RLS policy allows.
 export function useAdminMaterials() {
   const { isAdmin } = useAuth();
   return useQuery({
@@ -662,6 +678,12 @@ export function useAdminMaterials() {
   });
 }
 
+// Extended to also cover tags (already a real column, never exposed in
+// the admin edit form) and a manual status override — for nudging a
+// fixed "failed" file back to "ready", or demoting a bad "ready" file to
+// "catalog_only" without deleting it outright. "processing" isn't a
+// choice here on purpose: that state belongs to the processing pipeline,
+// not to a manual toggle.
 export function useUpdateMaterial() {
   const qc = useQueryClient();
   return useMutation({
@@ -671,6 +693,8 @@ export function useUpdateMaterial() {
       type?: string;
       course_code?: string | null;
       content_year?: number | null;
+      tags?: string[];
+      status?: "ready" | "catalog_only" | "failed";
     }) => {
       const { id, ...fields } = input;
       const { error } = await supabase.from("materials").update(fields).eq("id", id);
@@ -701,9 +725,9 @@ export function useDeleteMaterial() {
 }
 
 // ── Admin: hero carousel ────────────────────────────────────────────────
-// Reads from the hero_slides table + 'hero-images' storage bucket (see
-// the new migration). Falls back to nothing here if empty — the
-// component itself decides what to show when there are zero rows.
+// Reads from the hero_slides table + 'hero-images' storage bucket. Falls
+// back to nothing here if empty — the component itself decides what to
+// show when there are zero rows.
 export function useHeroSlides() {
   return useQuery({
     queryKey: ["hero-slides"],
@@ -812,3 +836,76 @@ export function useDemoteFromAdmin() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-user-roles"] }),
   });
 }
+
+// ── Admin: analytics ────────────────────────────────────────────────────
+// Built entirely from columns that already exist (download_count,
+// likes_count, processing_error, and whether a material has rows in
+// flashcards/quiz_questions). Quiz completion and flashcard usage aren't
+// in here — there's no table tracking student attempts yet, only the
+// generated cards/questions themselves — so this reports what's real
+// (generation coverage) instead of faking engagement numbers. Adding
+// attempt-tracking would mean touching the student-facing study screens,
+// which is outside the admin page itself.
+export function useAdminAnalytics() {
+  const { isAdmin } = useAuth();
+  return useQuery({
+    queryKey: ["admin-analytics"],
+    queryFn: async () => {
+      const [topDownloads, topLikes, failed, materialsRes, flashcardRows, quizRows] = await Promise.all([
+        supabase.from("materials").select("id, title, download_count, courses(code)").order("download_count", { ascending: false }).limit(8),
+        supabase.from("materials").select("id, title, likes_count, courses(code)").order("likes_count", { ascending: false }).limit(8),
+        supabase.from("materials").select("id, title, processing_error, updated_at, courses(code)").eq("status", "failed").order("updated_at", { ascending: false }),
+        supabase.from("materials").select("id, download_count, likes_count, status"),
+        supabase.from("flashcards").select("material_id"),
+        supabase.from("quiz_questions").select("material_id"),
+      ]);
+      if (topDownloads.error) throw topDownloads.error;
+      if (topLikes.error) throw topLikes.error;
+      if (failed.error) throw failed.error;
+      if (materialsRes.error) throw materialsRes.error;
+      if (flashcardRows.error) throw flashcardRows.error;
+      if (quizRows.error) throw quizRows.error;
+
+      const visible = (materialsRes.data ?? []).filter((m) => m.status === "ready" || m.status === "catalog_only");
+      const noEngagement = visible.filter((m) => m.download_count === 0 && m.likes_count === 0);
+      const withFlashcards = new Set((flashcardRows.data ?? []).map((f) => f.material_id));
+      const withQuiz = new Set((quizRows.data ?? []).map((q) => q.material_id));
+
+      return {
+        topDownloads: (topDownloads.data ?? []) as (Pick<MaterialRow, "id" | "title" | "download_count"> & { courses: { code: string } | null })[],
+        topLikes: (topLikes.data ?? []) as (Pick<MaterialRow, "id" | "title" | "likes_count"> & { courses: { code: string } | null })[],
+        failed: (failed.data ?? []) as (Pick<MaterialRow, "id" | "title" | "processing_error" | "updated_at"> & { courses: { code: string } | null })[],
+        noEngagementCount: noEngagement.length,
+        visibleCount: visible.length,
+        withFlashcardsCount: withFlashcards.size,
+        withQuizCount: withQuiz.size,
+      };
+    },
+    enabled: isAdmin,
+  });
+}
+
+// ── Admin: site settings ────────────────────────────────────────────────
+type SiteSettingsRow = Database["public"]["Tables"]["site_settings"]["Row"];
+
+export function useSiteSettings() {
+  return useQuery({
+    queryKey: ["site-settings"],
+    queryFn: async (): Promise<SiteSettingsRow> => {
+      const { data, error } = await supabase.from("site_settings").select("*").eq("id", true).single();
+      if (error) throw error;
+      return data as SiteSettingsRow;
+    },
+  });
+}
+
+export function useUpdateSiteSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { homepage_title?: string; homepage_subtitle?: string; featured_course_codes?: string[] }) => {
+      const { error } = await supabase.from("site_settings").update(input).eq("id", true);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
+  });
+  }
