@@ -274,4 +274,35 @@ export function useOfflineStatus(materialId: string): { downloaded: boolean; has
   }, [materialId]);
 
   return state;
-  }
+}
+
+// Powers the homepage's "Continue studying" and "Downloaded" sections —
+// same IndexedDB store as everything above, sorted by whichever is more
+// recent: the last time it was actually opened, or (saved but never
+// reopened) when it was saved. Reactive via the same subscribe/notify
+// pub-sub as useOfflineStatus, so downloading or removing something on
+// any page updates the homepage next time it's visited.
+export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loading: boolean } {
+  const [state, setState] = useState<{ items: OfflineBundle[]; loading: boolean }>({ items: [], loading: true });
+
+  useEffect(() => {
+    let active = true;
+    function refresh() {
+      listOfflineMaterials().then((all) => {
+        if (!active) return;
+        const sorted = [...all].sort(
+          (a, b) => new Date(b.lastOpenedAt ?? b.savedAt).getTime() - new Date(a.lastOpenedAt ?? a.savedAt).getTime(),
+        );
+        setState({ items: limit ? sorted.slice(0, limit) : sorted, loading: false });
+      });
+    }
+    refresh();
+    const unsubscribe = subscribe(refresh);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [limit]);
+
+  return state;
+}
