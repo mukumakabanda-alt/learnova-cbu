@@ -407,6 +407,32 @@ export function usePopularCourses(limit = 6) {
   });
 }
 
+// Per-course material count and the set of material types available for
+// that course — powers Browse's file counts and its type filter chips
+// ("show me courses that have a past paper") in one lightweight query
+// instead of fetching every material's full row.
+export function useCourseMaterialStats() {
+  return useQuery({
+    queryKey: ["course-material-stats"],
+    queryFn: async (): Promise<Record<string, { count: number; types: string[] }>> => {
+      const { data, error } = await supabase
+        .from("materials")
+        .select("course_code, type")
+        .in("status", ["ready", "processing", "catalog_only"])
+        .not("course_code", "is", null);
+      if (error) throw error;
+      const stats: Record<string, { count: number; types: string[] }> = {};
+      for (const row of data ?? []) {
+        if (!row.course_code) continue;
+        if (!stats[row.course_code]) stats[row.course_code] = { count: 0, types: [] };
+        stats[row.course_code].count += 1;
+        if (!stats[row.course_code].types.includes(row.type)) stats[row.course_code].types.push(row.type);
+      }
+      return stats;
+    },
+  });
+}
+
 // Same shape as usePopularMaterials, ordered by recency instead of
 // engagement — powers the homepage's "Recently added," which answers a
 // different question ("is this library actually alive?") than
@@ -928,4 +954,4 @@ export function useUpdateSiteSettings() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-  }
+        }
