@@ -3,10 +3,10 @@ import { Plus, CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useCreateRequest } from "@/lib/queries";
 
-export function RequestMaterialForm({ defaultCourseCode }: { defaultCourseCode?: string }) {
+export function RequestMaterialForm({ defaultCourseCode, defaultTitle = "" }: { defaultCourseCode?: string; defaultTitle?: string }) {
   const { user } = useAuth();
   const createRequest = useCreateRequest();
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(defaultTitle);
   const [notes, setNotes] = useState("");
 
   if (createRequest.isSuccess) {
