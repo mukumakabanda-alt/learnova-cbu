@@ -2,16 +2,17 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import {
-  listOfflineMaterials, removeOfflineMaterial, clearAllOffline, offlineStorageStats,
-  useOnlineStatus, type OfflineBundle,
+  removeOfflineMaterial, clearAllOffline, useOnlineStatus, useOfflineLibrary, deviceStorageEstimate,
 } from "@/lib/offline";
-import { Download, Trash2, WifiOff, Wifi, FileText, ArrowRight, HardDrive, Check } from "lucide-react";
+import { Download, Trash2, WifiOff, Wifi, FileText, ArrowRight, HardDrive, Check, Info } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/offline")({
   head: () => ({ meta: [{ title: "Offline library — Learnova" }] }),
   component: OfflineLibrary,
 });
+
+const STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — the "clear old items" cutoff
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 MB";
@@ -33,54 +34,72 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-// The "Offline Library" screen the offline feature never had. This is
-// the redesigned version: real storage numbers (the app now caches the
-// actual file, not just its text — see src/lib/offline.ts), sorted by
-// what you opened most recently rather than just when it was saved, and
-// clear Downloaded/Saved states instead of one flat list.
+// The "Offline Library" screen. Now built on the same reactive
+// useOfflineLibrary hook the homepage and Browse use, instead of a
+// fetch-once-on-mount snapshot — the previous version only refreshed
+// when you navigated to the page fresh, so downloading something
+// elsewhere and switching here wouldn't show it until a reload. That's
+// exactly the "download doesn't register" trust problem to avoid, so
+// this page now updates the instant anything changes, anywhere in the
+// app, no reload needed.
 function OfflineLibrary() {
   const isOnline = useOnlineStatus();
-  const [bundles, setBundles] = useState<OfflineBundle[] | null>(null);
-  const [stats, setStats] = useState<{ count: number; bytes: number; filesCount: number } | null>(null);
+  const { items: bundles, loading } = useOfflineLibrary();
+  const [deviceStorage, setDeviceStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [confirmingClearAll, setConfirmingClearAll] = useState(false);
+  const [confirmingClearStale, setConfirmingClearStale] = useState(false);
+  const [clearingStale, setClearingStale] = useState(false);
 
-  function refresh() {
-    listOfflineMaterials()
-      .then((list) =>
-        setBundles(
-          [...list].sort((a, b) => {
-            const aTime = a.lastOpenedAt ?? a.savedAt;
-            const bTime = b.lastOpenedAt ?? b.savedAt;
-            return aTime < bTime ? 1 : -1;
-          }),
-        ),
-      )
-      .catch(() => setBundles([]));
-    offlineStorageStats().then(setStats);
-  }
-
+  // Real device numbers, re-checked whenever the library itself changes
+  // (bundles is a fresh array every time something is saved/removed).
   useEffect(() => {
-    refresh();
-  }, []);
+    deviceStorageEstimate().then(setDeviceStorage);
+  }, [bundles]);
+
+  // Derived directly from the same reactive list — no separate fetch,
+  // so these numbers can never drift out of sync with what's on screen.
+  const stats = {
+    count: bundles.length,
+    bytes: bundles.reduce((sum, b) => sum + (b.fileBlob?.size ?? 0), 0),
+    filesCount: bundles.filter((b) => !!b.fileBlob).length,
+  };
+  const staleIds = bundles
+    .filter((b) => Date.now() - new Date(b.lastOpenedAt ?? b.savedAt).getTime() > STALE_MS)
+    .map((b) => b.material.id);
 
   async function handleRemove(id: string) {
     setRemovingId(id);
-    await removeOfflineMaterial(id);
-    refresh();
-    setRemovingId(null);
+    try {
+      await removeOfflineMaterial(id);
+    } finally {
+      setRemovingId(null);
+    }
   }
 
   function handleClearAll() {
-    if (!confirmingClear) {
-      setConfirmingClear(true);
-      setTimeout(() => setConfirmingClear(false), 3000);
+    if (!confirmingClearAll) {
+      setConfirmingClearAll(true);
+      setTimeout(() => setConfirmingClearAll(false), 3000);
       return;
     }
     clearAllOffline().then(() => {
-      setConfirmingClear(false);
-      refresh();
+      setConfirmingClearAll(false);
       toast.success("Offline library cleared.");
+    });
+  }
+
+  function handleClearStale() {
+    if (!confirmingClearStale) {
+      setConfirmingClearStale(true);
+      setTimeout(() => setConfirmingClearStale(false), 3000);
+      return;
+    }
+    setClearingStale(true);
+    Promise.all(staleIds.map((id) => removeOfflineMaterial(id))).then(() => {
+      setConfirmingClearStale(false);
+      setClearingStale(false);
+      toast.success(`Removed ${staleIds.length} item${staleIds.length === 1 ? "" : "s"} you hadn't opened in a while.`);
     });
   }
 
@@ -107,34 +126,70 @@ function OfflineLibrary() {
           Anything downloaded here opens with zero signal — the real document, not just its summary. Stored on this device only.
         </p>
 
-        {stats !== null && stats.count > 0 && (
-          <div className="mt-6 flex items-center justify-between rounded-2xl border border-border bg-surface-muted px-4 py-3">
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper">
-                <HardDrive className="h-4 w-4" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-foreground">
-                  {stats.count} material{stats.count === 1 ? "" : "s"} · {formatBytes(stats.bytes)}
+        {/* Honest partial-availability note — only when it's actually
+            relevant right now (you're offline and some saved items
+            don't have their file cached), not a permanent warning. */}
+        {!isOnline && !loading && bundles.length > 0 && stats.filesCount < stats.count && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-copper/25 bg-copper/5 p-3 text-xs text-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
+            <span>
+              You're offline right now. Documents are cached for {stats.filesCount} of {stats.count} saved item{stats.count === 1 ? "" : "s"} —
+              the rest still work for summary, flashcards, and quiz, just not the original file until you're back online.
+            </span>
+          </div>
+        )}
+
+        {stats.count > 0 && (
+          <div className="mt-6 rounded-2xl border border-border bg-surface-muted px-4 py-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper">
+                  <HardDrive className="h-4 w-4" />
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {stats.filesCount} fully downloaded{stats.count > stats.filesCount ? ` · ${stats.count - stats.filesCount} text-only` : ""}
+                <div>
+                  <div className="text-sm font-semibold text-foreground">
+                    {stats.count} material{stats.count === 1 ? "" : "s"} · {formatBytes(stats.bytes)}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {stats.filesCount} fully downloaded{stats.count > stats.filesCount ? ` · ${stats.count - stats.filesCount} study tools only` : ""}
+                  </div>
                 </div>
               </div>
+              <button
+                onClick={handleClearAll}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  confirmingClearAll ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                }`}
+              >
+                {confirmingClearAll ? "Tap to confirm" : "Clear all"}
+              </button>
             </div>
-            <button
-              onClick={handleClearAll}
-              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                confirmingClear ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              }`}
-            >
-              {confirmingClear ? "Tap to confirm" : "Clear all"}
-            </button>
+
+            {deviceStorage && (
+              <div className="mt-3 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+                Device storage: {formatBytes(deviceStorage.usage)} used · {formatBytes(Math.max(0, deviceStorage.quota - deviceStorage.usage))} free
+              </div>
+            )}
+
+            {staleIds.length > 0 && (
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+                <span className="text-[11px] text-muted-foreground">{staleIds.length} item{staleIds.length === 1 ? "" : "s"} not opened in 30+ days</span>
+                <button
+                  onClick={handleClearStale}
+                  disabled={clearingStale}
+                  className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                    confirmingClearStale ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  }`}
+                >
+                  {clearingStale ? "Clearing…" : confirmingClearStale ? "Tap to confirm" : "Clear old items"}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
         <div className="mt-6">
-          {bundles === null ? (
+          {loading ? (
             <div className="space-y-3">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="h-20 animate-pulse rounded-2xl border border-border bg-surface-muted" />
@@ -176,13 +231,20 @@ function OfflineLibrary() {
                           <Check className="h-2.5 w-2.5" /> Downloaded
                         </span>
                       ) : (
-                        <span className="shrink-0 rounded-full bg-surface-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
-                          Text only
+                        <span
+                          title="The document itself needs a connection — summary, flashcards, and quiz all still work offline."
+                          className="shrink-0 rounded-full bg-surface-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
+                        >
+                          Study tools only
                         </span>
                       )}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {material.courses?.code ?? "General"} · {material.type} · {flashcards.length} cards · {quiz.length} quiz Qs
+                      {material.courses?.code ?? "General"} · {material.type}
+                      {fileBlob ? ` · ${formatBytes(fileBlob.size)}` : ""}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">
+                      {material.summary ? "Summary · " : ""}{flashcards.length} cards · {quiz.length} quiz Qs
                     </div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground/70">
                       {lastOpenedAt ? `Opened ${relativeTime(lastOpenedAt)}` : `Saved ${relativeTime(savedAt)}`}
@@ -210,4 +272,4 @@ function OfflineLibrary() {
       <MobileTabBar />
     </div>
   );
-                                      }
+    }
