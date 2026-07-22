@@ -221,6 +221,27 @@ export async function offlineStorageStats(): Promise<{ count: number; bytes: num
   return { count: all.length, bytes, filesCount };
 }
 
+/**
+ * Real numbers from the browser itself — total storage quota granted to
+ * this site's origin, and how much of it is currently in use. This
+ * covers everything the browser counts for the origin (not just
+ * materials cached here), so it's a different number from
+ * offlineStorageStats() above rather than a replacement for it — shown
+ * as its own line on the offline page. Returns null wherever the API
+ * isn't available (older browsers, some private-browsing modes) — the
+ * page hides the line entirely rather than showing a placeholder.
+ */
+export async function deviceStorageEstimate(): Promise<{ usage: number; quota: number } | null> {
+  try {
+    if (typeof navigator === "undefined" || !navigator.storage?.estimate) return null;
+    const { usage, quota } = await navigator.storage.estimate();
+    if (usage == null || quota == null) return null;
+    return { usage, quota };
+  } catch {
+    return null;
+  }
+}
+
 /** True/false, live-updating as the browser goes on/offline. */
 export function useOnlineStatus(): boolean {
   const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
@@ -276,12 +297,13 @@ export function useOfflineStatus(materialId: string): { downloaded: boolean; has
   return state;
 }
 
-// Powers the homepage's "Continue studying" and "Downloaded" sections —
-// same IndexedDB store as everything above, sorted by whichever is more
-// recent: the last time it was actually opened, or (saved but never
-// reopened) when it was saved. Reactive via the same subscribe/notify
-// pub-sub as useOfflineStatus, so downloading or removing something on
-// any page updates the homepage next time it's visited.
+// Powers the homepage's "Continue studying," Browse's "Recently opened,"
+// and the offline library page — same IndexedDB store as everything
+// above, sorted by whichever is more recent: the last time it was
+// actually opened, or (saved but never reopened) when it was saved.
+// Reactive via the same subscribe/notify pub-sub as useOfflineStatus, so
+// downloading or removing something on any page updates every other page
+// reading this, with no manual refresh and no stale list left behind.
 export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loading: boolean } {
   const [state, setState] = useState<{ items: OfflineBundle[]; loading: boolean }>({ items: [], loading: true });
 
