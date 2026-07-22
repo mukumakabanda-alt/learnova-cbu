@@ -37,12 +37,6 @@ export function useProgrammes() {
 }
 
 // ── Admin: programmes ──────────────────────────────────────────────────
-// Programmes previously could only ever be created via a one-off SQL seed
-// — there was no way to add a new programme, fix its name/school, or set
-// how many years it takes from inside the admin panel itself. Courses
-// already reference programme_code as a foreign key, so creating a
-// programme here is what unlocks assigning courses to it in the Courses
-// tab (a new programme with no courses yet is expected and fine).
 export function useCreateProgramme() {
   const qc = useQueryClient();
   return useMutation({
@@ -78,10 +72,6 @@ export function useUpdateProgramme() {
   });
 }
 
-// Deleting a programme cascades to its courses (courses.programme_code has
-// ON DELETE SET NULL in the newer schema, so courses survive as
-// "no programme" rather than vanishing — same safety net the Courses tab
-// already relies on for a deleted course's materials).
 export function useDeleteProgramme() {
   const qc = useQueryClient();
   return useMutation({
@@ -126,18 +116,6 @@ export function useCourse(code: string) {
   });
 }
 
-// Course search. Deliberately filters client-side rather than building a
-// dynamic PostgREST `.or(...)` filter string out of the raw query: that
-// approach broke silently the moment a search contained a comma or
-// parenthesis (both totally normal to type), because those characters have
-// special meaning in PostgREST's filter syntax. Client-side filtering also
-// lets us match on `topics` (a text array — the homepage's own "Try IFRS"
-// example is a topic tag, not a code/title/lecturer) and `description`,
-// which the old server-side filter never covered at all. The course
-// catalog is small (tens to low hundreds of rows for a single university),
-// so fetching it once and filtering in memory is simple and correct; if
-// this ever needs to scale to thousands of courses, move to a Postgres
-// `tsvector` full-text index instead of hand-rolling filter strings again.
 export function useSearchCourses(query: string) {
   return useQuery({
     queryKey: ["search-courses", query],
@@ -160,16 +138,6 @@ export function useSearchCourses(query: string) {
   });
 }
 
-// One consistent search over everything: programmes, courses (code,
-// title, lecturer, description, outline topics) and materials (title,
-// type, tags, and the code/title of whatever course they belong to).
-// Previously Browse's search only looked at courses and Study's search
-// only looked at material titles, so the exact same query could find
-// completely different things depending on which box you typed it into.
-// This single hook backs both entry points now. Client-side filtering
-// for the same reason useSearchCourses is client-side (see its comment
-// above) — small catalogue, and it sidesteps PostgREST's special
-// characters in a raw query string.
 export type UniversalSearchResults = {
   courses: CourseWithProgramme[];
   materials: MaterialWithCourse[];
@@ -287,10 +255,35 @@ export function useMaterial(id: string) {
   });
 }
 
-// Related materials for a course — used twice on the study page with
-// different filters (e.g. "similar past papers" vs. "popular in this
-// course"), so this takes a course code plus options rather than a
-// single fixed shape.
+export type MaterialLookup = { id: string; title: string; type: string; courses: { code: string } | null };
+
+// Resolves a batch of material IDs to just enough to display them (title,
+// type, course code) — for places that only have a materialId to go on,
+// like the local Learnova AI student-memory history (quiz attempts,
+// download history), which stores IDs, not full material rows. Used by
+// the dashboard's "Current focus" and "Recent activity". A material
+// deleted since it was quizzed/downloaded simply won't appear in the
+// result — callers filter their list against whatever comes back rather
+// than showing a broken entry.
+export function useMaterialsByIds(ids: string[]) {
+  const key = [...new Set(ids)].sort().join(",");
+  return useQuery({
+    queryKey: ["materials-by-ids", key],
+    queryFn: async (): Promise<Record<string, MaterialLookup>> => {
+      if (!key) return {};
+      const { data, error } = await supabase
+        .from("materials")
+        .select("id, title, type, courses(code)")
+        .in("id", key.split(","));
+      if (error) throw error;
+      const map: Record<string, MaterialLookup> = {};
+      for (const row of (data ?? []) as MaterialLookup[]) map[row.id] = row;
+      return map;
+    },
+    enabled: !!key,
+  });
+}
+
 export function useRelatedMaterials(
   courseCode: string | null | undefined,
   options?: { type?: string; excludeId?: string; limit?: number },
@@ -401,10 +394,6 @@ export function usePopularCourses(limit = 6) {
   });
 }
 
-// Per-course material count and the set of material types available for
-// that course — powers Browse's file counts and its type filter chips
-// ("show me courses that have a past paper") in one lightweight query
-// instead of fetching every material's full row.
 export function useCourseMaterialStats() {
   return useQuery({
     queryKey: ["course-material-stats"],
@@ -427,10 +416,6 @@ export function useCourseMaterialStats() {
   });
 }
 
-// Same shape as usePopularMaterials, ordered by recency instead of
-// engagement — powers the homepage's "Recently added," which answers a
-// different question ("is this library actually alive?") than
-// "popular" does ("what's proven useful?").
 export function useRecentMaterials(limit = 8) {
   return useQuery({
     queryKey: ["recent-materials", limit],
@@ -448,12 +433,6 @@ export function useRecentMaterials(limit = 8) {
 }
 
 // ── YouTube recommendations ─────────────────────────────────────────────
-// Deliberately soft-fails to an empty list — missing YOUTUBE_API_KEY,
-// quota errors, or an empty query all resolve to [] rather than
-// rejecting, and the UI hides the whole section when it's empty. That's
-// by design (it's a "nice to have," not core), but it means a missing
-// secret is invisible rather than loud — worth checking directly in the
-// Supabase Edge Function secrets if this section never appears.
 export function useYoutubeRecommendations(query: string | null) {
   return useQuery({
     queryKey: ["youtube-recommendations", query],
@@ -511,10 +490,6 @@ export function useCreateRequest() {
   });
 }
 
-// Despite the name, this returns every request regardless of status —
-// admin.tsx used to filter to "open" client-side. The Requests tab needs
-// the full history (fulfilled/closed too), so the filtering now happens
-// in the component instead, same data source.
 export function useOpenRequests() {
   const { user, isAdmin } = useAuth();
   return useQuery({
@@ -531,9 +506,6 @@ export function useOpenRequests() {
   });
 }
 
-// Update a request's status and/or leave yourself a note — "flag for
-// later" just means adding a note while leaving it open, rather than a
-// fourth status, so it still shows up in the open queue with context.
 export function useUpdateMaterialRequest() {
   const qc = useQueryClient();
   return useMutation({
@@ -547,6 +519,11 @@ export function useUpdateMaterialRequest() {
 }
 
 // ── Saved materials ───────────────────────────────────────────────────
+// Now selects created_at and orders by it — the column already existed on
+// saved_materials, it just wasn't being asked for, so this list rendered
+// in whatever order Supabase happened to return rather than
+// most-recently-saved first. Fixes the same list on the homepage's "Your
+// library" section too, since both read through this one hook.
 export function useSavedMaterials() {
   const { user } = useAuth();
   return useQuery({
@@ -554,8 +531,9 @@ export function useSavedMaterials() {
     queryFn: async (): Promise<SavedWithMaterial[]> => {
       const { data, error } = await supabase
         .from("saved_materials")
-        .select("material_id, materials(*, courses(title, code))")
-        .eq("profile_id", user!.id);
+        .select("material_id, created_at, materials(*, courses(title, code))")
+        .eq("profile_id", user!.id)
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as SavedWithMaterial[];
     },
@@ -904,4 +882,4 @@ export function useUpdateSiteSettings() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-                               }
+    }
