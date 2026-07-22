@@ -10,6 +10,29 @@ export const Route = createFileRoute("/study/$id")({
   component: StudyDocument,
 });
 
+// Same wording as the Study hub's statusLabel() (src/routes/study.tsx) —
+// kept as its own small copy here rather than importing from a route
+// file, so this page's header badge always matches what a student saw
+// on the card they tapped to get here.
+function statusLabel(status: string) {
+  switch (status) {
+    case "processing":
+      return "Generating…";
+    case "catalog_only":
+      return "Saved · no study tools yet";
+    case "failed":
+      return "Needs attention";
+    default:
+      return "Ready";
+  }
+}
+const STATUS_COLOR: Record<string, string> = {
+  ready: "bg-teal/10 text-teal",
+  processing: "bg-copper/10 text-copper",
+  catalog_only: "bg-surface-muted text-muted-foreground",
+  failed: "bg-destructive/10 text-destructive",
+};
+
 function StudyDocument() {
   const { id } = Route.useParams();
   const isOnline = useOnlineStatus();
@@ -81,7 +104,17 @@ function StudyDocument() {
         ) : (
           <>
             <h1 className="mt-4 font-display text-3xl leading-tight text-foreground sm:text-4xl">{effectiveMaterial.title}</h1>
-            {effectiveMaterial.courses && <p className="mt-1 text-sm text-muted-foreground">{effectiveMaterial.courses.code} · {effectiveMaterial.courses.title}</p>}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {effectiveMaterial.courses && (
+                <span className="text-sm text-muted-foreground">{effectiveMaterial.courses.code} · {effectiveMaterial.courses.title}</span>
+              )}
+              <span className="inline-flex items-center rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
+                {effectiveMaterial.type}
+              </span>
+              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLOR[effectiveMaterial.status] ?? ""}`}>
+                {statusLabel(effectiveMaterial.status)}
+              </span>
+            </div>
             {isOfflineCopy && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
                 <WifiOff className="h-3.5 w-3.5" /> Viewing the offline copy saved on {new Date(offline!.savedAt).toLocaleDateString()}
@@ -100,4 +133,4 @@ function StudyDocument() {
       <MobileTabBar />
     </div>
   );
-}
+  }
