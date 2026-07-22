@@ -181,7 +181,7 @@ function CoursePage() {
           <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-md bg-primary px-2 py-1 font-semibold uppercase tracking-wide text-primary-foreground">{course.code}</span>
             <span className="rounded-md bg-surface px-2 py-1 font-medium text-muted-foreground">{course.programmes?.name}</span>
-            <span className="rounded-md bg-surface px-2 py-1 font-medium text-muted-foreground">Year {course.year} · Sem {course.semester}</span>
+            <span className="rounded-md bg-surface px-2 py-1 font-medium text-muted-foreground">Year {course.year}</span>
             {course.lecturer && <span className="rounded-md bg-surface px-2 py-1 font-medium text-muted-foreground">{course.lecturer}</span>}
           </div>
           <h1 className="mt-4 font-display text-4xl leading-tight text-foreground sm:text-5xl">{course.title}</h1>
