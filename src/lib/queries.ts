@@ -249,18 +249,6 @@ export function useCatalog(search?: string, programmeCode?: string | null) {
   return useQuery({
     queryKey: ["catalog", search, programmeCode ?? null],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
-      // Fetch once, then apply the programme rule in plain TypeScript:
-      // show material from the student's programme plus General uploads
-      // with no course. A PostgREST inner join hid General materials, which
-      // made valid uploads look like they had disappeared.
-      //
-      // Search used to be a server-side .ilike("title", ...) — title
-      // only. useUniversalSearch() (the universal /search page) matches
-      // title, type, course code/title, AND tags, client-side — so the
-      // exact same word typed into this page's own search box could find
-      // nothing while /search found it immediately. This now runs the
-      // identical match function as useUniversalSearch, client-side, so
-      // both entry points agree.
       const { data, error } = await supabase
         .from("materials")
         .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
@@ -299,24 +287,32 @@ export function useMaterial(id: string) {
   });
 }
 
-export function useRelatedMaterials(material: MaterialWithCourse | null | undefined) {
+// Related materials for a course — used twice on the study page with
+// different filters (e.g. "similar past papers" vs. "popular in this
+// course"), so this takes a course code plus options rather than a
+// single fixed shape.
+export function useRelatedMaterials(
+  courseCode: string | null | undefined,
+  options?: { type?: string; excludeId?: string; limit?: number },
+) {
+  const limit = options?.limit ?? 6;
   return useQuery({
-    queryKey: ["related-materials", material?.id, material?.course_code],
+    queryKey: ["related-materials", courseCode ?? null, options?.type ?? null, options?.excludeId ?? null, limit],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
-      if (!material) return [];
       let q = supabase
         .from("materials")
         .select("*, courses(title, code, programme_code)")
         .in("status", ["ready", "processing", "catalog_only"])
-        .neq("id", material.id)
         .order("created_at", { ascending: false })
-        .limit(6);
-      q = material.course_code ? q.eq("course_code", material.course_code) : q.eq("type", material.type);
+        .limit(limit);
+      q = courseCode ? q.eq("course_code", courseCode) : q.is("course_code", null);
+      if (options?.type) q = q.eq("type", options.type);
+      if (options?.excludeId) q = q.neq("id", options.excludeId);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as MaterialWithCourse[];
     },
-    enabled: !!material,
+    enabled: courseCode !== undefined,
   });
 }
 
@@ -365,8 +361,6 @@ export function useToggleMaterialLike() {
       qc.invalidateQueries({ queryKey: ["catalog"] });
       qc.invalidateQueries({ queryKey: ["popular-materials"] });
     },
-    // A failed like used to fail completely silently — the heart just
-    // didn't fill in, with no indication why (usually "sign in first").
     onError: (error: unknown) => {
       const message = error instanceof Error && error.message ? error.message : "Couldn't like that right now — try again in a moment.";
       toast.error(message);
@@ -460,11 +454,11 @@ export function useRecentMaterials(limit = 8) {
 // by design (it's a "nice to have," not core), but it means a missing
 // secret is invisible rather than loud — worth checking directly in the
 // Supabase Edge Function secrets if this section never appears.
-export function useYoutubeRecommendations(query: string) {
+export function useYoutubeRecommendations(query: string | null) {
   return useQuery({
     queryKey: ["youtube-recommendations", query],
-    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnailUrl: string }[]> => {
-      if (!query.trim()) return [];
+    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnail: string }[]> => {
+      if (!query?.trim()) return [];
       const { data, error } = await supabase.functions.invoke("youtube-recommendations", { body: { query } });
       if (error) {
         console.error("youtube-recommendations failed:", error);
@@ -472,7 +466,7 @@ export function useYoutubeRecommendations(query: string) {
       }
       return data?.videos ?? [];
     },
-    enabled: !!query.trim(),
+    enabled: !!query?.trim(),
   });
 }
 
@@ -577,10 +571,6 @@ export function useToggleSaved() {
       if (!user) throw new Error("Sign in to save materials");
       if (save) {
         const { error } = await supabase.from("saved_materials").insert({ profile_id: user.id, material_id: materialId });
-        // Postgres code 23505 = unique_violation. A fast double-tap can fire
-        // this same insert twice before the UI re-renders with the "saved"
-        // state — the row already existing is not a real failure from the
-        // user's point of view, so don't surface it as one.
         if (error && error.code !== "23505") throw error;
       } else {
         const { error } = await supabase.from("saved_materials").delete().eq("profile_id", user.id).eq("material_id", materialId);
@@ -588,8 +578,6 @@ export function useToggleSaved() {
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-materials"] }),
-    // Same fix as likes: a failed save used to just look like nothing
-    // happened when the bookmark button was tapped.
     onError: (error: unknown) => {
       const message = error instanceof Error && error.message ? error.message : "Couldn't save that right now — try again in a moment.";
       toast.error(message);
@@ -607,18 +595,11 @@ export function useBumpStreak() {
       if (error) throw error;
     },
     onSuccess: () => refreshProfile(),
-    // Fires automatically on page load rather than from a tap, so this
-    // logs for debugging instead of interrupting anyone with a toast —
-    // but it no longer fails completely invisibly either.
     onError: (error: unknown) => console.error("bump_streak failed:", error),
   });
 }
 
 // ── Profile self-edit ───────────────────────────────────────────────────
-// The "users update own profile" RLS policy has always allowed this —
-// there was just no UI or hook wired up to it, so students had no way to
-// fix a typo in their name, correct their programme/year, or add a phone
-// number after signing up.
 export function useUpdateProfile() {
   const { user, refreshProfile } = useAuth();
   return useMutation({
@@ -665,9 +646,6 @@ export function useCreateCourse() {
   });
 }
 
-// Edit an EXISTING course's outline (title, lecturer, description,
-// topics, programme, year) — the admin panel previously could only
-// create new courses, never touch ones already in the catalogue.
 export function useUpdateCourse() {
   const qc = useQueryClient();
   return useMutation({
@@ -702,12 +680,6 @@ export function useDeleteCourse() {
   });
 }
 
-// ── Admin: materials manager ───────────────────────────────────────────
-// Every material regardless of status — the public useCatalog() hook
-// deliberately excludes anything an ordinary visitor shouldn't see, but
-// an admin managing the catalogue needs to see (and fix) failed uploads
-// too, which is exactly what the "Owners and admins view all their
-// materials" RLS policy allows.
 export function useAdminMaterials() {
   const { isAdmin } = useAuth();
   return useQuery({
@@ -724,12 +696,6 @@ export function useAdminMaterials() {
   });
 }
 
-// Extended to also cover tags (already a real column, never exposed in
-// the admin edit form) and a manual status override — for nudging a
-// fixed "failed" file back to "ready", or demoting a bad "ready" file to
-// "catalog_only" without deleting it outright. "processing" isn't a
-// choice here on purpose: that state belongs to the processing pipeline,
-// not to a manual toggle.
 export function useUpdateMaterial() {
   const qc = useQueryClient();
   return useMutation({
@@ -770,10 +736,6 @@ export function useDeleteMaterial() {
   });
 }
 
-// ── Admin: hero carousel ────────────────────────────────────────────────
-// Reads from the hero_slides table + 'hero-images' storage bucket. Falls
-// back to nothing here if empty — the component itself decides what to
-// show when there are zero rows.
 export function useHeroSlides() {
   return useQuery({
     queryKey: ["hero-slides"],
@@ -820,7 +782,6 @@ export function useDeleteHeroSlide() {
   });
 }
 
-// Swaps two slides' positions — used by the up/down reorder buttons.
 export function useReorderHeroSlide() {
   const qc = useQueryClient();
   return useMutation({
@@ -834,7 +795,6 @@ export function useReorderHeroSlide() {
   });
 }
 
-// ── Admin: student directory ───────────────────────────────────────────
 export function useAllStudents() {
   const { isAdmin } = useAuth();
   return useQuery({
@@ -883,15 +843,6 @@ export function useDemoteFromAdmin() {
   });
 }
 
-// ── Admin: analytics ────────────────────────────────────────────────────
-// Built entirely from columns that already exist (download_count,
-// likes_count, processing_error, and whether a material has rows in
-// flashcards/quiz_questions). Quiz completion and flashcard usage aren't
-// in here — there's no table tracking student attempts yet, only the
-// generated cards/questions themselves — so this reports what's real
-// (generation coverage) instead of faking engagement numbers. Adding
-// attempt-tracking would mean touching the student-facing study screens,
-// which is outside the admin page itself.
 export function useAdminAnalytics() {
   const { isAdmin } = useAuth();
   return useQuery({
@@ -931,7 +882,6 @@ export function useAdminAnalytics() {
   });
 }
 
-// ── Admin: site settings ────────────────────────────────────────────────
 type SiteSettingsRow = Database["public"]["Tables"]["site_settings"]["Row"];
 
 export function useSiteSettings() {
@@ -954,4 +904,4 @@ export function useUpdateSiteSettings() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-        }
+                               }
