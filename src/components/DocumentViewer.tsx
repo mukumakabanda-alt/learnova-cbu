@@ -11,6 +11,15 @@
 //
 // Does NOT use Google Docs gview with private Supabase signed URLs
 // (that path is the main reason Office previews looked broken).
+//
+// Two ways to use this file: the exported DocumentViewer below is the
+// full-screen modal (course page and the study hub still open it via a
+// button, unchanged) — and InlineDocumentPreview at the very end is the
+// same rendering pipeline embedded directly in the page, no modal, no
+// extra tap, for the study page's "the document should be visible right
+// away" requirement. They share every format-specific renderer below
+// (PdfCanvasViewer, DocxViewer, etc.) so a rendering fix in one applies
+// to both automatically.
 
 import "@/lib/polyfills";
 import { useEffect, useRef, useState } from "react";
@@ -105,7 +114,6 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
           if (!ctx) continue;
           ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
 
-          // pdf.js v4+/v6 expects canvas in render params
           const renderTask = page.render({
             canvasContext: ctx,
             viewport,
@@ -400,7 +408,7 @@ function decodeXml(s: string): string {
     .replace(/&apos;/g, "'");
 }
 
-/* ───────────────────────── MAIN VIEWER ───────────────────────── */
+/* ───────────────────────── MAIN VIEWER (full-screen modal) ───────────────────────── */
 
 export function DocumentViewer({
   open,
@@ -726,6 +734,198 @@ function ViewerMessage({
           {detail}
         </p>
       )}
+    </div>
+  );
+}
+
+/* ───────────────────────── INLINE PREVIEW (study page) ───────────────────────── */
+
+/**
+ * Same rendering pipeline as the modal above (same format detection,
+ * same offline fallback), embedded directly in the page instead of
+ * behind a "View" tap. The modal still exists for "Expand" — useful for
+ * a dense PDF on a small phone — but it's no longer the only way to see
+ * the file, which was the actual gap: a document being hidden behind an
+ * extra click either way, saved or not.
+ */
+export function InlineDocumentPreview({
+  materialId,
+  filePath,
+  title,
+}: {
+  materialId: string;
+  filePath: string | null;
+  title: string;
+}) {
+  const [kind, setKind] = useState<PreviewKind | null>(null);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [usingOfflineCopy, setUsingOfflineCopy] = useState(false);
+
+  useEffect(() => {
+    if (!filePath) return;
+    let active = true;
+    let localObjectUrl: string | null = null;
+
+    setKind(null);
+    setPreviewBlob(null);
+    setObjectUrl(null);
+    setTextContent(null);
+    setLoadError(false);
+    setErrorDetail(null);
+    setUsingOfflineCopy(false);
+
+    async function renderFromBlob(resolvedKind: PreviewKind, blob: Blob) {
+      setPreviewBlob(blob);
+      if (resolvedKind === "image" || resolvedKind === "video" || resolvedKind === "audio") {
+        localObjectUrl = URL.createObjectURL(blob);
+        setObjectUrl(localObjectUrl);
+      } else if (resolvedKind === "text") {
+        setTextContent(await blob.text());
+      }
+    }
+
+    async function useOfflineCopy(): Promise<boolean> {
+      const bundle = await getOfflineMaterial(materialId);
+      if (!active || !bundle?.fileBlob) return false;
+      const detected = refinePreviewKind(
+        previewKindFromMime(bundle.fileMime || bundle.fileBlob.type || null),
+        filePath,
+        bundle.fileMime || bundle.fileBlob.type || null,
+      );
+      const finalKind = detected === "none" ? previewKind(filePath!) : detected;
+      setKind(finalKind);
+      await renderFromBlob(finalKind, bundle.fileBlob);
+      setUsingOfflineCopy(true);
+      touchLastOpened(materialId);
+      return true;
+    }
+
+    async function resolveKind(signedUrl: string, blobHint: Blob | null): Promise<PreviewKind> {
+      const extKind = previewKind(filePath!);
+      if (extKind !== "none" && extKind !== "office") return extKind;
+      const mime = blobHint?.type || (await sniffContentType(signedUrl));
+      const fromMime = previewKindFromMime(mime);
+      if (fromMime !== "none" && fromMime !== "office") return fromMime;
+      const magic = await sniffFileSignature(signedUrl);
+      return refinePreviewKind(magic, filePath, mime);
+    }
+
+    async function load() {
+      if (!navigator.onLine) {
+        const usedCache = await useOfflineCopy();
+        if (!usedCache && active) {
+          setLoadError(true);
+          setErrorDetail("Offline and no cached file available.");
+        }
+        return;
+      }
+      try {
+        const signed = await getViewUrl(filePath!);
+        if (!active) return;
+        touchLastOpened(materialId);
+        const response = await fetch(signed);
+        if (!response.ok) throw new Error(`Couldn't fetch file (status ${response.status}).`);
+        const blob = await response.blob();
+        if (!active) return;
+        const resolvedKind = await resolveKind(signed, blob);
+        if (!active) return;
+        setKind(resolvedKind);
+        await renderFromBlob(resolvedKind, blob);
+      } catch (e) {
+        const usedCache = await useOfflineCopy();
+        if (!usedCache && active) {
+          setLoadError(true);
+          setErrorDetail(e instanceof Error ? e.message : String(e));
+        }
+      }
+    }
+
+    load();
+    return () => {
+      active = false;
+      if (localObjectUrl) URL.revokeObjectURL(localObjectUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, materialId]);
+
+  if (!filePath) {
+    return (
+      <div className="flex h-32 items-center justify-center rounded-2xl border border-dashed border-border bg-surface-muted">
+        <p className="text-sm text-muted-foreground">No file attached to this material yet.</p>
+      </div>
+    );
+  }
+
+  const ready =
+    kind === "pdf"
+      ? !!previewBlob
+      : kind === "image" || kind === "video" || kind === "audio"
+        ? !!objectUrl
+        : kind === "text"
+          ? textContent !== null
+          : kind === "docx" || kind === "pptx" || kind === "xlsx"
+            ? !!previewBlob
+            : kind === "office" || kind === "none"
+              ? true
+              : false;
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border bg-surface-muted">
+      {usingOfflineCopy && (
+        <div className="flex items-center gap-1.5 bg-copper/10 px-4 py-1.5 text-[11px] font-medium text-copper">
+          <CloudOff className="h-3 w-3" /> Showing your offline copy
+        </div>
+      )}
+      <div className="max-h-[70vh] overflow-auto">
+        {loadError ? (
+          <ViewerMessage
+            icon={FileWarning}
+            text={
+              navigator.onLine
+                ? "Couldn't open a preview right now — check your connection, or try downloading it instead."
+                : "You're offline and this document hasn't been downloaded yet — connect once and tap Download."
+            }
+            detail={errorDetail}
+          />
+        ) : kind === null || !ready ? (
+          <div className="flex h-40 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        ) : kind === "pdf" ? (
+          <PdfCanvasViewer blob={previewBlob!} />
+        ) : kind === "image" ? (
+          <div className="flex min-h-[240px] items-center justify-center p-4">
+            <img src={objectUrl!} alt={title} className="max-h-[65vh] max-w-full rounded-lg object-contain" />
+          </div>
+        ) : kind === "text" ? (
+          <pre className="mx-auto max-w-3xl whitespace-pre-wrap break-words p-6 font-mono text-xs leading-relaxed text-foreground">
+            {textContent}
+          </pre>
+        ) : kind === "docx" ? (
+          <DocxViewer blob={previewBlob!} />
+        ) : kind === "pptx" ? (
+          <PptxViewer blob={previewBlob!} />
+        ) : kind === "xlsx" ? (
+          <XlsxViewer blob={previewBlob!} />
+        ) : kind === "video" ? (
+          <div className="flex min-h-[240px] items-center justify-center p-4">
+            <video src={objectUrl!} controls playsInline className="max-h-[65vh] w-full rounded-xl bg-black" />
+          </div>
+        ) : kind === "audio" ? (
+          <div className="flex min-h-[160px] items-center justify-center p-8">
+            <audio src={objectUrl!} controls className="w-full" />
+          </div>
+        ) : (
+          <ViewerMessage
+            icon={FileQuestion}
+            text="No rich inline preview for this older file format (.doc/.ppt/.xls). Download it to open on your device — DOCX/PPTX/XLSX/PDF/images/videos preview in-app."
+          />
+        )}
+      </div>
     </div>
   );
       }
