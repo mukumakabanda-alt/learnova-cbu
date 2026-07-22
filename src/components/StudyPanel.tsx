@@ -2,17 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
-  Download, Eye, Share2, Heart, WifiOff, Check, AlertTriangle, Youtube, Flame,
+  Download, Maximize2, Share2, Heart, Bookmark, BookmarkCheck, WifiOff, Check, AlertTriangle, Youtube, Flame,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload,
-  useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike, type MaterialWithCourse,
+  useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike,
+  useSavedMaterials, useToggleSaved, type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, saveMaterialOfflineFromDownload, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
 import { forceDownload } from "@/lib/document-files";
-import { DocumentViewer } from "@/components/DocumentViewer";
+import { DocumentViewer, InlineDocumentPreview } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
 import { loadStudentProfile, saveStudentProfile } from "@/lib/student-profile";
 import type { Database } from "@/integrations/supabase/types";
@@ -50,6 +51,13 @@ export function StudyPanel({
   const incrementDownload = useIncrementDownload();
   const { data: liked } = useMaterialLikeStatus(material.id);
   const toggleLike = useToggleMaterialLike();
+
+  // "Save" used to only exist inside the full-screen viewer's toolbar —
+  // meaning it was hidden behind the same extra tap as the document
+  // itself. It's a primary action now, next to Download/Share/Like.
+  const { data: saved } = useSavedMaterials();
+  const isSaved = (saved ?? []).some((s) => s.material_id === material.id);
+  const toggleSaved = useToggleSaved();
 
   // Download and "Save for offline" used to be two separate buttons that
   // both quietly did almost the same thing — confusing, and it meant
@@ -107,19 +115,15 @@ export function StudyPanel({
 
   // If this material is already saved offline, opening its page counts
   // as "opening" it for the Library's "recently opened" ordering — the
-  // closest thing offline has to Spotify's "Recently played."
+  // closest thing offline has to Spotify's "Recently played." (The
+  // inline preview below also touches this on a successful file load —
+  // harmless if it fires twice, and this one still covers materials
+  // with no file attached.)
   useEffect(() => {
     touchLastOpened(material.id);
   }, [material.id]);
 
-  // Opens the in-website document viewer (see DocumentViewer) instead of
-  // trying to open a new browser tab. That old approach was the actual
-  // cause of "I tap View and nothing happens": it opened a blank tab
-  // *before* an `await`, but for a non-PDF file the browser then just
-  // tried to download the raw file into that blank tab with no visible
-  // change — indistinguishable from doing nothing at all. This shows the
-  // document right on the page instead, with Save/Download next to it.
-  function handleView() {
+  function handleExpand() {
     setViewerOpen(true);
   }
 
@@ -195,6 +199,14 @@ export function StudyPanel({
     toggleLike.mutate(material.id);
   }
 
+  function handleToggleSave() {
+    if (!user) {
+      toast.error("Sign in to save this.");
+      return;
+    }
+    toggleSaved.mutate({ materialId: material.id, save: !isSaved });
+  }
+
   // Feeds every quiz attempt into the local Learnova AI student-memory
   // system (src/lib/learnova-ai/student-memory.ts) — this is what powers
   // "weak topics" / "strong topics" / quiz score on the dashboard. Stored
@@ -222,18 +234,23 @@ export function StudyPanel({
 
   return (
     <div>
-      {/* Utility row: view, download, share, like, outdated flag — quiet
-          by default, only shows what applies. Shown regardless of
-          processing status: the raw file is already safely uploaded and
-          viewable/downloadable even while AI-generated study tools are
-          still being produced (or failed outright) — a document being
-          "still generating" used to hide these buttons entirely, which is
-          exactly what made a freshly-uploaded file look broken. */}
+      {/* PREVIEW — first thing on the page now, no tap required to see it. */}
+      <div className="mb-4">
+        <InlineDocumentPreview materialId={material.id} filePath={material.file_path} title={material.title} />
+      </div>
+
+      {/* Actions row: quiet by default, only shows what applies. Shown
+          regardless of processing status — the raw file is already
+          safely uploaded and viewable/downloadable even while
+          AI-generated study tools are still being produced (or failed
+          outright); a document being "still generating" used to hide
+          these buttons entirely, which is exactly what made a
+          freshly-uploaded file look broken. */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {material.file_path && (
           <>
-            <button onClick={handleView} className={pillBtn}>
-              <Eye className="h-3.5 w-3.5" /> View
+            <button onClick={handleExpand} className={pillBtn}>
+              <Maximize2 className="h-3.5 w-3.5" /> Expand
             </button>
             <button
               onClick={downloaded ? handleRemoveDownload : handleDownload}
@@ -252,6 +269,14 @@ export function StudyPanel({
             </button>
           </>
         )}
+        <button
+          onClick={handleToggleSave}
+          disabled={toggleSaved.isPending}
+          className={`${pillBtn} ${isSaved ? "border-primary/40 bg-primary/10 text-copper hover:bg-primary/10" : ""}`}
+        >
+          {isSaved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+          {isSaved ? "Saved" : "Save"}
+        </button>
         <button onClick={handleShare} className={pillBtn}>
           <Share2 className="h-3.5 w-3.5" /> Share
         </button>
@@ -589,4 +614,4 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-  }
+         }
