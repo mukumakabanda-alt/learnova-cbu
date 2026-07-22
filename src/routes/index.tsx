@@ -56,11 +56,10 @@ function Home() {
       {/* HEADLINE + SEARCH — quiet, centered, plenty of breathing room */}
       <section className="mx-auto max-w-3xl px-4 pb-4 pt-10 text-center sm:px-6 sm:pt-14">
         <h1 className="font-display text-4xl leading-[1.05] tracking-tight text-foreground sm:text-6xl">
-          Find. Learn. Revise.{" "}
-          <span className="text-gradient-gold">Repeat.</span>
+          Study smarter at <span className="text-gradient-gold">CBU.</span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg">
-          The calm study companion for Copperbelt University students.
+          Find notes, past papers, summaries, and revision tools in seconds.
         </p>
         <div className="mx-auto mt-10 max-w-xl">
           <SearchBar />
@@ -233,4 +232,4 @@ function Home() {
       <MobileTabBar />
     </div>
   );
-         }
+      }
