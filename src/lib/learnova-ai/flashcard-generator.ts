@@ -1,8 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════
-// Learnova AI v2 — Advanced Flashcard Generator
-// Upgraded with: formula-based cards, conceptual cards, sequence cards,
-// difficulty tagging, and enhanced definition extraction.
-// No external APIs. Pure TypeScript.
+// Learnova AI (local engine) — Flashcard Generator
+// Rule-based: formula-based cards, definition cards, cloze deletion,
+// conceptual cards, sequence cards, difficulty tagging. No external
+// APIs — deterministic pattern matching over the extracted text. This
+// only runs as the offline fallback; see learnova-ai/index.ts.
 // ═══════════════════════════════════════════════════════════════════
 
 import { splitSentences, tokenizeContent, stem, STOP_WORDS, semanticTokenize } from "./tokenizer";
@@ -53,7 +54,16 @@ function extractDefinitions(text: string): Definition[] {
       if (termWords.length > 8 || termWords.length === 0) continue;
       if (STOP_WORDS.has(termWords[0].toLowerCase())) continue;
       if (term.length < 3 || term.length > 80) continue;
-      if (definition.length < 10 || definition.length > 250) continue;
+      // The generic "X is/are Y" pattern above matches almost any
+      // sentence containing "is"/"are" (e.g. "The exam is on Monday"),
+      // not just real definitions. A short, few-word tail ("on Monday")
+      // is the tell — genuine definitions almost always explain
+      // *something* in more than a couple of words. This filters most
+      // of that noise out without touching the more specific patterns
+      // above it, which are already precise enough not to need it.
+      const defWordCount = definition.split(/\s+/).filter(Boolean).length;
+      if (definition.length < 25 || defWordCount < 4) continue;
+      if (definition.length > 250) continue;
       const lowerTerm = term.toLowerCase();
       if (["it","they","this","that","these","those","there","here","what","which","who"].includes(lowerTerm)) continue;
       let cleanTerm = term;
@@ -107,23 +117,17 @@ function generateDefinitionCards(definitions: Definition[], maxCards: number): F
   }));
 }
 
-function generateTrueFalseCards(text: string, keywords: string[], maxCards: number): Flashcard[] {
-  const sentences = splitSentences(text);
-  const cards: Flashcard[] = [];
-  for (let i = 0; i < sentences.length && cards.length < maxCards; i++) {
-    const sentence = sentences[i].trim();
-    if (sentence.length < 30 || sentence.length > 200) continue;
-    const hasFactualVerb = /\b(is|are|was|were|has|have|contains|consists|produces|requires|causes|results\s+in|leads\s+to|depends\s+on)\b/i.test(sentence);
-    if (!hasFactualVerb) continue;
-    const words = tokenizeContent(sentence);
-    if (words.length < 8 || words.length > 35) continue;
-    const sentenceLower = sentence.toLowerCase();
-    const keyword = keywords.find((k) => sentenceLower.includes(k.toLowerCase()));
-    if (!keyword) continue;
-    cards.push({ question: `True or False: ${sentence}`, answer: "True", position: 0, difficulty: "easy", source: "truefalse" });
-  }
-  return cards;
-}
+// Deliberately removed: this file used to have a generateTrueFalseCards()
+// here. It matched sentences with a "factual" verb and produced a
+// True/False card whose answer was *always* "True" — there was no
+// negation step, so nothing in the deck ever generated a genuine false
+// statement. A student who just answered "True" on every True/False
+// card would score 100% on that whole card type without reading
+// anything, which is worse than not having the card type at all.
+// Reliable negation ("X causes Y" → a genuinely false variant) needs
+// more than regex to do safely, so rather than ship a gameable question
+// type from the offline fallback, that budget now goes to cloze cards
+// (generateClozeCards), which don't have this failure mode.
 
 function generateConceptualCards(text: string, keywords: string[], maxCards: number): Flashcard[] {
   const sentences = splitSentences(text);
@@ -180,26 +184,24 @@ export function generateFlashcards(text: string, maxCards: number = 20): Flashca
   const defBudget = Math.min(Math.ceil(maxCards * 0.3), definitions.length);
   cards.push(...generateDefinitionCards(definitions, defBudget));
 
-  // Strategy 2: Formula cards (new in v2)
+  // Strategy 2: Formula cards
   const formulaBudget = Math.min(Math.ceil(maxCards * 0.15), formulas.length);
   for (const formula of formulas.slice(0, formulaBudget)) {
     const fc = formulaToFlashcard(formula);
     cards.push({ question: fc.question, answer: fc.answer, position: 0, difficulty: "hard", source: "formula" });
   }
 
-  // Strategy 3: Cloze deletion cards
-  const clozeBudget = Math.ceil(maxCards * 0.3);
+  // Strategy 3: Cloze deletion cards (also absorbs the budget that used
+  // to go to the broken True/False generator — see the comment above
+  // generateConceptualCards)
+  const clozeBudget = Math.ceil(maxCards * 0.4);
   cards.push(...generateClozeCards(text, keywords, clozeBudget));
 
-  // Strategy 4: Conceptual cards (new in v2)
+  // Strategy 4: Conceptual cards
   const conceptBudget = Math.ceil(maxCards * 0.1);
   cards.push(...generateConceptualCards(text, keywords, conceptBudget));
 
-  // Strategy 5: True/false cards
-  const tfBudget = Math.ceil(maxCards * 0.1);
-  cards.push(...generateTrueFalseCards(text, keywords, tfBudget));
-
-  // Strategy 6: Sequence cards (new in v2)
+  // Strategy 5: Sequence cards
   const seqBudget = Math.ceil(maxCards * 0.05);
   cards.push(...generateSequenceCards(text, seqBudget));
 
