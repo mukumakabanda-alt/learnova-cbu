@@ -11,7 +11,11 @@ import { LearnovaAI } from "@/lib/learnova-ai";
 const MATERIAL_TYPES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
 
-const STAGES = ["Reading & uploading…", "Generating summary, flashcards & quiz…", "Adding to catalogue…"];
+// Generation used to be a third stage here, blocking this screen for as
+// long as the AI call took. It now happens in the background after the
+// material is saved — see runBackgroundGeneration below and the study
+// page, which shows live per-stage progress instead (StudyPanel.tsx).
+const STAGES = ["Reading & uploading…", "Saving to your library…"];
 
 function safeDbText(value: unknown, fallback = ""): string {
   return String(value ?? fallback)
@@ -104,6 +108,131 @@ function runAIOffMainThread(
   });
 }
 
+// Runs after the material row already exists with status "processing" —
+// deliberately not awaited by handleFile, so the student lands on the
+// study page immediately and watches this fill in live (StudyPanel.tsx
+// polls for it — see useMaterial in src/lib/queries.ts) instead of
+// staring at the upload screen for however long generation takes.
+//
+// Primary path: the real, Gemini-backed pipeline
+// (supabase/functions/process-material). It does its own DB writes and
+// its own per-stage status tracking, so on success there's nothing left
+// to do here.
+//
+// Fallback path: only reached if that call itself couldn't be made
+// (thrown/network-level failure, not a normal in-band error — the edge
+// function handles its own errors and always still returns a response).
+// If the browser is genuinely offline, the local LearnovaAI engine runs
+// instead so the student isn't left with nothing — tagged
+// generation_source: "offline-fallback" so the study page can be honest
+// about which kind of result it's showing and offer to regenerate with
+// the real thing once they're back online.
+async function runBackgroundGeneration(params: {
+  materialId: string;
+  text: string;
+  title: string;
+  courseCode: string | null;
+  finalType: MaterialType;
+  validYear: number | null;
+}): Promise<void> {
+  const { materialId, text, title, courseCode, finalType, validYear } = params;
+
+  try {
+    const { error } = await supabase.functions.invoke("process-material", {
+      body: { materialId, text, title },
+    });
+    if (error) throw error;
+    return;
+  } catch (e) {
+    console.error("AI gateway call failed:", e);
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+
+    if (!offline) {
+      await supabase
+        .from("materials")
+        .update({
+          status: "failed",
+          processing_error: describeUploadError(e),
+          summary_status: "failed",
+          flashcards_status: "failed",
+          quiz_status: "failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", materialId);
+      return;
+    }
+
+    try {
+      const result = await runAIOffMainThread(text, {
+        title, contentYear: validYear, courseCode, type: finalType,
+      });
+      const summary = safeDbText(result.summary) || null;
+      const tags = result.tags.map((tag) => safeDbText(tag)).filter(Boolean).slice(0, 10);
+      const flashcards = result.flashcards
+        .map((f) => ({ question: safeDbText(f.question), answer: safeDbText(f.answer), position: f.position }))
+        .filter((f) => f.question && f.answer);
+      const quiz = result.quiz
+        .map((q) => ({
+          question: safeDbText(q.question),
+          options: q.options.map((option) => safeDbText(option)).filter(Boolean).slice(0, 4),
+          correctIndex: Math.max(0, Math.min(q.options.length - 1, Number.isInteger(q.correctIndex) ? q.correctIndex : 0)),
+          explanation: safeDbText(q.explanation),
+          position: q.position,
+        }))
+        .filter((q) => q.question && q.options.length >= 2);
+
+      // Fresh material, nothing to delete first — this only ever runs
+      // once, right after the row is created.
+      if (flashcards.length) {
+        await supabase.from("flashcards").insert(
+          flashcards.map((f) => ({ material_id: materialId, question: f.question, answer: f.answer, position: f.position })),
+        );
+      }
+      if (quiz.length) {
+        await supabase.from("quiz_questions").insert(
+          quiz.map((q) => ({
+            material_id: materialId, question: q.question, options: q.options,
+            correct_index: q.correctIndex, explanation: q.explanation, position: q.position,
+          })),
+        );
+      }
+
+      const anySucceeded = !!summary || flashcards.length > 0 || quiz.length > 0;
+      await supabase
+        .from("materials")
+        .update({
+          status: anySucceeded ? "ready" : "failed",
+          ...(summary ? { summary, tags: tags.length ? tags : [] } : {}),
+          summary_status: summary ? "ready" : "failed",
+          summary_error: summary ? null : "Offline mode couldn't produce a summary for this document.",
+          flashcards_status: flashcards.length ? "ready" : "failed",
+          flashcards_error: flashcards.length ? null : "Offline mode couldn't produce flashcards for this document.",
+          quiz_status: quiz.length ? "ready" : "failed",
+          quiz_error: quiz.length ? null : "Offline mode couldn't produce a quiz for this document.",
+          generation_source: "offline-fallback",
+          processing_error: anySucceeded
+            ? "Generated offline (a lighter-weight local version) — reconnect and tap Regenerate for the full AI version."
+            : "You're offline and local generation didn't find enough usable text either. Reconnect and tap Regenerate.",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", materialId);
+    } catch (fallbackError) {
+      console.error("Offline fallback generation failed:", fallbackError);
+      await supabase
+        .from("materials")
+        .update({
+          status: "failed",
+          processing_error: "You're offline and we couldn't generate study tools locally either. Reconnect and tap Regenerate.",
+          summary_status: "failed",
+          flashcards_status: "failed",
+          quiz_status: "failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", materialId);
+    }
+  }
+}
+
 export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -166,7 +295,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // document-text.ts), during which the file itself, even a large
       // one, now uploads in the background at the same time instead of
       // only starting once reading finished.
-      const [{ text, pages, quality }, uploadResult] = await Promise.all([
+      const [{ text, pages, quality, confidence, confidenceNote }, uploadResult] = await Promise.all([
         extractDocumentText(file, (p) => {
           setOcrStage(p.stage);
           setOcrProgress(p.progress);
@@ -184,43 +313,14 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
+      const willGenerate = quality !== "none";
 
-      // Generate study tools — off the main thread via a Web Worker, so
-      // this doesn't freeze the upload screen on a large document. A
-      // short/empty extraction skips this step entirely — the material
-      // is still saved either way.
+      // Save the material now — status "processing" if there's text worth
+      // generating study tools from, "catalog_only" if not. Generation
+      // itself happens after this (see below): the student is taken
+      // straight to the study page and watches it fill in live, rather
+      // than this screen blocking until the AI call finishes.
       setStageIndex(1);
-      let summary: string | null = null;
-      let tags: string[] = [];
-      let flashcards: { question: string; answer: string; position: number }[] = [];
-      let quiz: { question: string; options: string[]; correctIndex: number; explanation: string; position: number }[] = [];
-
-      if (quality !== "none") {
-        try {
-          const result = await runAIOffMainThread(safeDbText(text), {
-            title,
-            contentYear: validYear,
-            courseCode: courseCode ?? null,
-            type: finalType,
-          });
-          summary = safeDbText(result.summary) || null;
-          tags = result.tags.map((tag) => safeDbText(tag)).filter(Boolean).slice(0, 10);
-          flashcards = result.flashcards.map((f) => ({ question: safeDbText(f.question), answer: safeDbText(f.answer), position: f.position })).filter((f) => f.question && f.answer);
-          quiz = result.quiz.map((q) => ({
-            question: safeDbText(q.question),
-            options: q.options.map((option) => safeDbText(option)).filter(Boolean).slice(0, 4),
-            correctIndex: Math.max(0, Math.min(q.options.length - 1, Number.isInteger(q.correctIndex) ? q.correctIndex : 0)),
-            explanation: safeDbText(q.explanation),
-            position: q.position,
-          })).filter((q) => q.question && q.options.length >= 2);
-        } catch (e) {
-          console.error("Learnova AI processing failed:", e);
-        }
-      }
-
-      // Catalogue it — one insert, already carrying the AI's results.
-      setStageIndex(2);
-      const hasAnyStudyTools = quality !== "none" && (!!summary || flashcards.length > 0 || quiz.length > 0);
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
@@ -230,42 +330,34 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           content_year: validYear,
           pages,
           file_path: path,
-          status: hasAnyStudyTools ? "ready" : "catalog_only",
+          status: willGenerate ? "processing" : "catalog_only",
           source: "student",
           uploaded_by: user.id,
-          tags: tags.length ? tags : [],
-          summary:
-            summary ??
-            "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
+          tags: [],
+          content_confidence: confidence,
+          content_confidence_note: confidenceNote ?? null,
+          summary: willGenerate
+            ? null
+            : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
         })
         .select()
         .single();
       if (insertError) throw insertError;
 
-      if (quality !== "none") {
-        if (flashcards.length) {
-          const { error: fcError } = await supabase
-            .from("flashcards")
-            .insert(flashcards.map((f) => ({ material_id: material.id, question: f.question, answer: f.answer, position: f.position })));
-          if (fcError) console.error("Saving flashcards failed:", fcError);
-        }
-        if (quiz.length) {
-          const { error: quizError } = await supabase.from("quiz_questions").insert(
-            quiz.map((q) => ({
-              material_id: material.id,
-              question: q.question,
-              options: q.options,
-              correct_index: q.correctIndex,
-              explanation: q.explanation,
-              position: q.position,
-            })),
-          );
-          if (quizError) console.error("Saving quiz failed:", quizError);
-        }
+      setDone(true);
+
+      if (willGenerate) {
+        void runBackgroundGeneration({
+          materialId: material.id,
+          text: safeDbText(text),
+          title,
+          courseCode: courseCode ?? null,
+          finalType,
+          validYear,
+        });
       }
 
-      setDone(true);
-      setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 500);
+      setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
     } catch (e) {
       console.error("Upload failed:", e);
       setError(describeUploadError(e));
@@ -418,11 +510,13 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
                 : fileSizeMB && fileSizeMB > 8
                   ? `${fileLabel ?? "Document"} (${fileSizeMB.toFixed(1)} MB) — larger files take longer on slower connections, hang tight.`
                   : `${fileLabel ?? "Document"} — this can take a moment, don't close the tab.`
-              : "PDF, Word, PowerPoint, a photo of a page, or a zip of files — we'll do our best with anything you give it."}
+              : done
+                ? "Your study tools are being generated now — you'll see them fill in on the next page."
+                : "PDF, Word, PowerPoint, a photo of a page, or a zip of files — we'll do our best with anything you give it."}
           </p>
           {error && <p className="mt-1 text-xs font-medium text-destructive">{error}</p>}
         </label>
       </motion.div>
     </div>
   );
-      }
+    }
