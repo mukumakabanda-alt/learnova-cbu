@@ -1,23 +1,43 @@
 // ═══════════════════════════════════════════════════════════════════
-// Learnova AI v3 — Main Entry Point (Trillion Edition)
+// Learnova AI (local engine) — Main Entry Point
 //
-// The most intelligent pure-code AI engine ever built for education.
+// What this actually is, plainly: a from-scratch, rule-based text
+// pipeline — tokenization, TF-IDF-style keyword scoring, TextRank-style
+// extractive summarization, regex/pattern-based definition & formula
+// extraction, and template-based flashcard/quiz generation. Every
+// function here is deterministic code, not a trained model, and nothing
+// in this file calls out to any language model or external AI API.
 //
-// v3 Capabilities (on top of v2):
-//   • TRUE REASONING — deductive, inductive, abductive, causal,
-//     analogical, conditional inference with multi-step chains
-//   • STUDENT MEMORY — tracks mastery, identifies weaknesses,
-//     generates personalized study plans, adapts to the individual
-//   • RESILIENT PIPELINE — every module is isolated, failures degrade
-//     gracefully, no single point of failure
-//   • CACHING — results cached for 24h, large documents chunked
-//   • ZAMBIAN ENGLISH — handles local abbreviations, lecturer shorthand,
-//     British English, course codes, student note conventions
-//   • ADAPTIVE LEARNING — recommendations adapt to student performance
-//   • STUDY COACH — daily study plans, insights, streaks, goals
+// Its job in this app is now specifically to be the OFFLINE FALLBACK:
+// the real study-tool generation for an uploaded document is the
+// Gemini-backed pipeline (see supabase/functions/process-material and
+// DocumentUpload.tsx's primary path). This engine only runs when that
+// isn't reachable — genuinely offline, or the AI gateway call failed —
+// so a student still gets a usable summary/flashcards/quiz instead of
+// nothing. Anything it produces is tagged generation_source:
+// "offline-fallback" so the UI can be honest about which kind of result
+// the student is looking at, and can offer to regenerate with the real
+// pipeline once they're back online.
 //
-// No external APIs. No network calls. No dependencies.
-// Works in browser and Node.js. Works offline. Never fails.
+// That reframing is also why cleanOcr now defaults to true below — see
+// the note at that line. It used to default to false and nothing in the
+// app ever turned it on, so the one step this pipeline had that matched
+// "clean the text before you try to summarize it" never actually ran.
+//
+// Capabilities:
+//   • Rule-based inference — chained pattern matches over cause/effect,
+//     sequence and comparison language (labelled "reasoning" below —
+//     it's pattern matching over sentence structure, not logical inference
+//     over a world model, and shouldn't be read as more than that)
+//   • Local student-progress tracking (mastery, weak areas, streaks)
+//   • Per-module resilience — one module failing doesn't take the rest
+//     down with it (see degradedModules in the result)
+//   • Result caching (24h) and chunking for large documents
+//   • Zambian-English normalization (local abbreviations, lecturer
+//     shorthand, British spelling, course-code conventions)
+//
+// Runs entirely in-browser (including inside a Web Worker — see
+// worker.ts). No network calls, no external dependencies, works offline.
 // ═══════════════════════════════════════════════════════════════════
 
 // Core v2 modules
@@ -66,10 +86,10 @@ import type {
 const globalCache = new LearnovaCache(200, 1000 * 60 * 60 * 24); // 200 entries, 24h TTL
 
 /**
- * LearnovaAI v3 — the most intelligent pure-code AI engine.
+ * LearnovaAI — the local, rule-based offline-fallback engine.
  */
 export const LearnovaAI = {
-  // ═══ Core document processing (v3 — resilient + cached) ═══
+  // ═══ Core document processing (resilient + cached) ═══
 
   processDocument(text: string, opts: ProcessOptions): ProcessedDocument {
     const startTime = Date.now();
@@ -84,7 +104,14 @@ export const LearnovaAI = {
       buildKnowledgeGraph: buildKG = true, analyzeStructure: analyzeStruct = true,
       assessDifficulty: assessDiff = true, extractReferences: extractRefs = true,
       extractTables: extractTabs = true, detectLanguage: detectLang = true,
-      generateStudyPath: genPath = true, cleanOcr: doCleanOcr = false,
+      generateStudyPath: genPath = true,
+      // Was `false` with nothing ever opting in, so the "clean the text
+      // before you try to summarize it" step (the vision doc's own
+      // stage-1 principle) silently never ran. Cleaning is self-gating
+      // internally (only applied if it measurably improves quality — see
+      // cleanOcrText's qualityScore check below), so defaulting it on is
+      // safe even for already-clean text.
+      cleanOcr: doCleanOcr = true,
       analyzeFigures: analyzeFigs = true,
       enableReasoning = true,
       normalizeLocalLanguage = true,
@@ -215,7 +242,7 @@ export const LearnovaAI = {
     let glossary: any[] = [];
     try { glossary = buildGlossary(processedText); } catch { degradedModules.push("study-path"); }
 
-    // ── v3: Reasoning ──
+    // ── Reasoning (pattern-based, not model-based — see header note) ──
     let reasoningChains: ReasoningChain[] = [];
     let causalRelations: CausalRelation[] = [];
     let inferences: LogicalInference[] = [];
@@ -256,7 +283,7 @@ export const LearnovaAI = {
     return result;
   },
 
-  // ═══ v3: Reasoning API ═══
+  // ═══ Reasoning API ═══
 
   extractReasoningChains: (text: string) => extractReasoningChains(text),
   extractCausalRelations: (text: string) => extractCausalRelations(text),
@@ -264,7 +291,7 @@ export const LearnovaAI = {
   reasonAboutQuestion: (question: string, text: string, chains?: ReasoningChain[], causals?: CausalRelation[]) =>
     reasonAboutQuestion(question, text, chains ?? extractReasoningChains(text), causals ?? extractCausalRelations(text)),
 
-  // ═══ v3: Student Memory API ═══
+  // ═══ Student Memory API ═══
 
   createStudentProfile,
   recordQuizAttempt,
@@ -277,13 +304,13 @@ export const LearnovaAI = {
   serializeProfile,
   deserializeProfile,
 
-  // ═══ v3: Local Language API ═══
+  // ═══ Local Language API ═══
 
   normalizeLocalText,
   hasLocalPatterns,
   getLocalTerms,
 
-  // ═══ v3: Resilience API ═══
+  // ═══ Resilience API ═══
 
   resilientExecute,
   parallelPipeline,
