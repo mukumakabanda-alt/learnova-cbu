@@ -1,8 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════
-// Learnova AI v2 — Advanced Quiz Generator
-// Upgraded with: formula questions, true/false, fill-in-blank,
-// sequence ordering, difficulty tagging, and enhanced distractors.
-// No external APIs. Pure TypeScript.
+// Learnova AI (local engine) — Quiz Generator
+// Rule-based: definition, cloze, fact and formula multiple-choice
+// questions with distractor generation and difficulty tagging. No
+// external APIs — deterministic pattern matching over the extracted
+// text. This only runs as the offline fallback; see learnova-ai/index.ts.
 // ═══════════════════════════════════════════════════════════════════
 
 import { splitSentences, tokenizeContent, tokenize, stem, STOP_WORDS } from "./tokenizer";
@@ -48,6 +49,14 @@ function extractDefinitionQuestions(text: string): QuestionCandidate[] {
       const termWords = term.split(/\s+/);
       if (termWords.length > 6 || termWords.length === 0) continue;
       if (STOP_WORDS.has(termWords[0].toLowerCase())) continue;
+      // See the matching note in flashcard-generator.ts: the generic
+      // "X is/are Y" pattern matches almost any sentence with "is"/"are",
+      // so a short, few-word tail is the tell that this isn't really a
+      // definition. Filtering it here keeps the multiple-choice stem
+      // ("Which of the following best describes...") from being built
+      // around something like "The exam is on Monday."
+      const defWordCount = definition.split(/\s+/).filter(Boolean).length;
+      if (definition.length < 25 || defWordCount < 4) continue;
       let cleanTerm = term;
       if (cleanTerm.toLowerCase().startsWith("the ") && termWords.length > 1) cleanTerm = term.slice(4);
       candidates.push({
@@ -121,26 +130,16 @@ function extractFactQuestions(text: string, keywords: string[]): QuestionCandida
   return candidates;
 }
 
-function extractTrueFalseQuestions(text: string, keywords: string[]): QuestionCandidate[] {
-  const sentences = splitSentences(text);
-  const candidates: QuestionCandidate[] = [];
-  for (let i = 0; i < sentences.length && candidates.length < 8; i++) {
-    const sentence = sentences[i].trim();
-    if (sentence.length < 30 || sentence.length > 200) continue;
-    const hasFactual = /\b(?:is|are|was|were|has|have|contains|consists|produces|requires|causes|results\s+in|leads\s+to)\b/i.test(sentence);
-    if (!hasFactual) continue;
-    const words = tokenizeContent(sentence);
-    if (words.length < 8 || words.length > 35) continue;
-    const sentenceLower = sentence.toLowerCase();
-    if (!keywords.some((k) => sentenceLower.includes(k.toLowerCase()))) continue;
-    candidates.push({
-      question: `True or False: ${sentence}`,
-      correctAnswer: "True", sentence, sentenceIndex: i, type: "truefalse",
-      difficulty: "easy",
-    });
-  }
-  return candidates;
-}
+// Deliberately removed: this file used to have an
+// extractTrueFalseQuestions() here, feeding a "truefalse" candidate type
+// whose correctAnswer was hardcoded to the literal string "True" (see
+// generateDistractors below, which correspondingly just returned
+// ["False"] as the only distractor). Every True/False question this
+// pipeline ever produced was therefore true — a student who always
+// answered "True" would score 100% on that question type without
+// reading anything. Since generateDistractors/buildQuizQuestion still
+// handle a "truefalse" candidate.type correctly if one ever exists, this
+// only removes the *generation* of them; nothing else needed to change.
 
 function extractFormulaQuestions(text: string): QuestionCandidate[] {
   const formulas = extractFormulas(text);
@@ -180,6 +179,10 @@ function generateDistractors(
     }
     while (distractors.length < count) distractors.push(`Option ${distractors.length + 1}`);
   } else if (type === "truefalse") {
+    // No candidate with this type is generated anymore (see the removal
+    // note above extractFormulaQuestions) — kept only so this function
+    // stays correct if that ever changes, instead of silently falling
+    // through to the generic branch below.
     return ["False"];
   } else {
     for (const def of allDefinitions) {
@@ -238,21 +241,20 @@ export function generateQuiz(text: string, maxQuestions: number = 10): QuizQuest
   const defCandidates = extractDefinitionQuestions(text);
   const clozeCandidates = extractClozeQuestions(text, keywords);
   const factCandidates = extractFactQuestions(text, keywords);
-  const tfCandidates = extractTrueFalseQuestions(text, keywords);
   const formulaCandidates = extractFormulaQuestions(text);
 
-  // Mix strategies
+  // Mix strategies. The budget that used to go to true/false questions
+  // (10%) now goes to cloze and fact questions instead — see the removal
+  // note above extractFormulaQuestions for why.
   const defBudget = Math.min(Math.ceil(maxQuestions * 0.3), defCandidates.length);
-  const clozeBudget = Math.min(Math.ceil(maxQuestions * 0.25), clozeCandidates.length);
-  const factBudget = Math.min(Math.ceil(maxQuestions * 0.2), factCandidates.length);
-  const tfBudget = Math.min(Math.ceil(maxQuestions * 0.1), tfCandidates.length);
+  const clozeBudget = Math.min(Math.ceil(maxQuestions * 0.3), clozeCandidates.length);
+  const factBudget = Math.min(Math.ceil(maxQuestions * 0.25), factCandidates.length);
   const formulaBudget = Math.min(Math.ceil(maxQuestions * 0.15), formulaCandidates.length);
 
   const mixed: QuestionCandidate[] = [
     ...defCandidates.slice(0, defBudget),
     ...clozeCandidates.slice(0, clozeBudget),
     ...factCandidates.slice(0, factBudget),
-    ...tfCandidates.slice(0, tfBudget),
     ...formulaCandidates.slice(0, formulaBudget),
   ];
 
@@ -275,4 +277,4 @@ function shuffleWithSeed<T>(arr: T[], seed: number): T[] {
   const result = [...arr]; let s = seed + 1;
   for (let i = result.length - 1; i > 0; i--) { s = (s * 9301 + 49297) % 233280; const j = Math.floor((s / 233280) * (i + 1)); [result[i], result[j]] = [result[j], result[i]]; }
   return result;
-}
+                                   }
