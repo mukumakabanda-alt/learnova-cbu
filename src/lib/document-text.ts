@@ -11,10 +11,10 @@
 //
 // Contract: extractDocumentText() NEVER throws for "wrong format" or
 // "couldn't fully parse this." Worst case it resolves with an empty
-// string and quality: "none" — the caller decides what to do with that
-// (still upload the raw file, just skip auto-generated study tools). The
-// only thing that can go wrong here is a genuinely unreadable/corrupted
-// file, and even that resolves rather than rejects.
+// string, quality: "none" and confidence: 0 — the caller decides what to
+// do with that (still upload the raw file, just skip auto-generated
+// study tools). The only thing that can go wrong here is a genuinely
+// unreadable/corrupted file, and even that resolves rather than rejects.
 
 import "@/lib/polyfills"; // must load before pdf.js — see that file for why
 
@@ -23,6 +23,15 @@ export type ExtractedDocument = {
   pages: number | null;
   /** Rough signal for the caller — did we get real, usable text? */
   quality: "good" | "partial" | "none";
+  /**
+   * 0-1 confidence signal for how trustworthy this extraction is. Lets the
+   * upload flow (and the study page, later) tell the student "this came
+   * from a scan — some details might be off" instead of presenting a
+   * shaky OCR read with the same quiet confidence as a clean text layer.
+   */
+  confidence: number;
+  /** Short, human-readable reason when confidence is meaningfully reduced. */
+  confidenceNote?: string;
   /** For zip bundles / partial OCR runs: notes about what was covered. */
   sources?: string[];
 };
@@ -51,6 +60,13 @@ const MAX_OCR_UNITS = 20;
 const OCR_INIT_TIMEOUT_MS = 45_000;
 const OCR_PAGE_TIMEOUT_MS = 30_000;
 
+// A PDF page's own native text layer is treated as "good enough, skip
+// OCR for this page" once it clears this many characters. Deliberately
+// small — a real content page nearly always has far more — but big
+// enough that a page number or a one-word running header doesn't count
+// as "this page has real text."
+const PAGE_TEXT_MIN_CHARS = 25;
+
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "tif", "heic", "heif"];
 
 function extOf(name: string): string {
@@ -74,6 +90,52 @@ function qualityOf(text: string): ExtractedDocument["quality"] {
   if (len >= 200) return "good";
   if (len >= 20) return "partial";
   return "none";
+}
+
+// ── Confidence scoring ──────────────────────────────────────────────────
+// Previously nothing in this file (or anywhere downstream) surfaced how
+// trustworthy an extraction actually was — a document that was 90% blank
+// scanned pages looked identical, data-shape-wise, to a clean text layer.
+// This gives every extraction a 0-1 score plus, when it's meaningfully
+// reduced, a short human reason — consumed by the upload flow to store
+// materials.content_confidence and shown on the study page as a small
+// "this might be missing details" note instead of false confidence.
+function computeConfidence(opts: {
+  quality: ExtractedDocument["quality"];
+  totalPages: number | null;
+  ocrPages: number;
+  uncoveredPages: number;
+}): { confidence: number; note: string | null } {
+  let confidence = opts.quality === "good" ? 0.92 : opts.quality === "partial" ? 0.55 : 0.15;
+  const total = opts.totalPages ?? 1;
+
+  if (opts.ocrPages > 0) {
+    const ocrFraction = Math.min(1, opts.ocrPages / total);
+    confidence -= 0.2 * ocrFraction; // OCR is inherently less reliable than a native text layer
+  }
+  if (opts.uncoveredPages > 0) {
+    const missedFraction = Math.min(1, opts.uncoveredPages / total);
+    confidence -= 0.4 * missedFraction; // genuinely missing content is worse than lower-fidelity content
+  }
+  confidence = Math.max(0.02, Math.min(0.98, confidence));
+
+  let note: string | null = null;
+  if (opts.uncoveredPages > 0) {
+    note = `${opts.uncoveredPages} of ${total} page${total === 1 ? "" : "s"} couldn't be read and may be missing from this document's study tools.`;
+  } else if (opts.ocrPages > 0 && confidence < 0.6) {
+    note = "This looks like a scan or photo — some words may have been misread.";
+  } else if (opts.quality === "partial") {
+    note = "Only a small amount of readable text was found in this document.";
+  } else if (opts.quality === "none") {
+    note = "We couldn't find readable text in this document.";
+  }
+  return { confidence: Math.round(confidence * 100) / 100, note };
+}
+
+// Shorthand for formats that are never OCR'd (docx/pptx/txt/zip-aggregate)
+// — confidence purely from how much usable text came out.
+function simpleConfidence(quality: ExtractedDocument["quality"]): { confidence: number; note: string | null } {
+  return computeConfidence({ quality, totalPages: null, ocrPages: 0, uncoveredPages: 0 });
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -195,6 +257,15 @@ async function loadJSZip() {
   return mod.default ?? mod;
 }
 
+// Reads every page's native text layer, then runs OCR only on the pages
+// that actually need it — not on the whole document, and not on none of
+// it. The old version summed every page's text together and only ran OCR
+// if the *total* was under ~20 characters, which meant a handful of
+// characters anywhere in the file (a footer, a page number, a watermark)
+// could silently skip OCR for entirely-scanned pages elsewhere in the
+// same document. Mixed documents (mostly real text with a couple of
+// scanned diagram pages, or a mostly-scanned set of notes with one
+// machine-readable cover page) are common enough that this matters.
 async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocument> {
   const [pdfjsLib, workerUrlMod] = await Promise.all([
     import("pdfjs-dist"),
@@ -203,47 +274,108 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
   (pdfjsLib as any).GlobalWorkerOptions.workerSrc = (workerUrlMod as any).default;
   const buffer = await file.arrayBuffer();
   const pdf = await (pdfjsLib as any).getDocument({ data: buffer }).promise;
+  const totalPages: number = pdf.numPages;
 
-  let text = "";
-  for (let i = 1; i <= pdf.numPages; i++) {
+  const nativePages: string[] = new Array(totalPages).fill("");
+  const needsOcr: boolean[] = new Array(totalPages).fill(false);
+
+  for (let i = 1; i <= totalPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((it: any) => ("str" in it ? it.str : "")).join(" ") + "\n\n";
+    const pageText = cleanWhitespace(content.items.map((it: any) => ("str" in it ? it.str : "")).join(" "));
+    nativePages[i - 1] = pageText;
+    needsOcr[i - 1] = pageText.length < PAGE_TEXT_MIN_CHARS;
   }
-  text = cleanWhitespace(text);
-  if (qualityOf(text) !== "none") return { text, pages: pdf.numPages, quality: qualityOf(text) };
 
-  if (ctx.budget.remaining <= 0) return { text: "", pages: pdf.numPages, quality: "none" };
+  const pagesNeedingOcr = needsOcr.reduce((n, v) => n + (v ? 1 : 0), 0);
+
+  if (pagesNeedingOcr === 0) {
+    const text = cleanWhitespace(nativePages.join("\n\n"));
+    const quality = qualityOf(text);
+    const { confidence, note } = computeConfidence({ quality, totalPages, ocrPages: 0, uncoveredPages: 0 });
+    return { text, pages: totalPages, quality, confidence, confidenceNote: note ?? undefined };
+  }
+
+  if (ctx.budget.remaining <= 0) {
+    // No OCR budget left at all (a prior file in this same upload already
+    // used it up) — ship whatever native text exists rather than nothing,
+    // and say plainly that some pages are likely missing.
+    const text = cleanWhitespace(nativePages.join("\n\n"));
+    const quality = qualityOf(text);
+    const { confidence, note } = computeConfidence({ quality, totalPages, ocrPages: 0, uncoveredPages: pagesNeedingOcr });
+    return {
+      text,
+      pages: totalPages,
+      quality,
+      confidence,
+      confidenceNote: note ?? undefined,
+      sources: [`OCR budget already used up — ${pagesNeedingOcr} page(s) may be missing text`],
+    };
+  }
 
   const worker = await getOcrWorker(ctx);
-  const pageCount = Math.min(pdf.numPages, ctx.budget.remaining);
-  let ocrText = "";
-  for (let i = 1; i <= pageCount; i++) {
-    ctx.label = `page ${i} of ${pageCount}`;
-    ctx.onProgress?.({ stage: `Reading ${ctx.label}…`, progress: (i - 1) / pageCount });
-    const canvas = await renderPdfPageToCanvas(pdf, i);
-    const { data } = await withTimeout(worker.recognize(canvas), OCR_PAGE_TIMEOUT_MS, `Reading page ${i}`);
-    ocrText += (data?.text ?? "") + "\n\n";
+  const ocrCandidateIndexes = needsOcr.map((v, idx) => (v ? idx : -1)).filter((idx) => idx !== -1);
+  const ocrableCount = Math.min(ocrCandidateIndexes.length, ctx.budget.remaining);
+  let ocredCount = 0;
+  let failedCount = 0;
+
+  for (let n = 0; n < ocrableCount; n++) {
+    const pageIndex = ocrCandidateIndexes[n];
+    const pageNumber = pageIndex + 1;
+    ctx.label = `page ${pageNumber}`;
+    ctx.onProgress?.({ stage: `Reading page ${n + 1} of ${ocrableCount}…`, progress: n / ocrableCount });
+    try {
+      const canvas = await renderPdfPageToCanvas(pdf, pageNumber);
+      const { data } = await withTimeout(worker.recognize(canvas), OCR_PAGE_TIMEOUT_MS, `Reading page ${pageNumber}`);
+      const ocrText = cleanWhitespace(data?.text ?? "");
+      // Keep whichever is longer — occasionally the native layer had
+      // *something* just under the threshold that OCR actually misses.
+      nativePages[pageIndex] = ocrText.length > nativePages[pageIndex].length ? ocrText : nativePages[pageIndex];
+      ocredCount++;
+    } catch {
+      failedCount++;
+    }
     ctx.budget.remaining--;
   }
-  ocrText = cleanWhitespace(ocrText);
+
+  const uncoveredPages = pagesNeedingOcr - ocrableCount + failedCount;
+  const text = cleanWhitespace(nativePages.join("\n\n"));
+  const quality = qualityOf(text);
+  const { confidence, note } = computeConfidence({ quality, totalPages, ocrPages: ocredCount, uncoveredPages });
+  const sources: string[] = [];
+  if (ocredCount > 0) sources.push(`OCR read ${ocredCount} of ${totalPages} page${totalPages === 1 ? "" : "s"}`);
+  if (uncoveredPages > 0) sources.push(`${uncoveredPages} page${uncoveredPages === 1 ? "" : "s"} couldn't be read`);
+
   return {
-    text: ocrText,
-    pages: pdf.numPages,
-    quality: qualityOf(ocrText),
-    sources: pageCount < pdf.numPages ? [`OCR covered ${pageCount} of ${pdf.numPages} pages`] : undefined,
+    text,
+    pages: totalPages,
+    quality,
+    confidence,
+    confidenceNote: note ?? undefined,
+    sources: sources.length ? sources : undefined,
   };
 }
 
 async function extractImage(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocument> {
-  if (ctx.budget.remaining <= 0) return { text: "", pages: null, quality: "none" };
+  if (ctx.budget.remaining <= 0) {
+    const { confidence, note } = computeConfidence({ quality: "none", totalPages: 1, ocrPages: 0, uncoveredPages: 1 });
+    return { text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined };
+  }
   ctx.label = "the image";
   ctx.onProgress?.({ stage: "Reading the image…", progress: 0 });
   const worker = await getOcrWorker(ctx);
-  const { data } = await withTimeout(worker.recognize(file), OCR_PAGE_TIMEOUT_MS, "Reading the image");
-  ctx.budget.remaining--;
-  const text = cleanWhitespace(data?.text ?? "");
-  return { text, pages: null, quality: qualityOf(text) };
+  try {
+    const { data } = await withTimeout(worker.recognize(file), OCR_PAGE_TIMEOUT_MS, "Reading the image");
+    ctx.budget.remaining--;
+    const text = cleanWhitespace(data?.text ?? "");
+    const quality = qualityOf(text);
+    const { confidence, note } = computeConfidence({ quality, totalPages: 1, ocrPages: 1, uncoveredPages: 0 });
+    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+  } catch {
+    ctx.budget.remaining--;
+    const { confidence, note } = computeConfidence({ quality: "none", totalPages: 1, ocrPages: 0, uncoveredPages: 1 });
+    return { text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined };
+  }
 }
 
 async function extractDocxBuffer(buffer: ArrayBuffer): Promise<string> {
@@ -320,7 +452,9 @@ async function extractZip(file: File | Blob, ctx: OcrCtx, depth = 0): Promise<Ex
   }
 
   const text = cleanWhitespace(parts.join("\n\n"));
-  return { text, pages: null, quality: qualityOf(text), sources };
+  const quality = qualityOf(text);
+  const { confidence, note } = simpleConfidence(quality);
+  return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined, sources };
 }
 
 async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<ExtractedDocument> {
@@ -335,34 +469,48 @@ async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<Extrac
   }
   if (extension === "docx" || mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const text = await extractDocxBuffer(await file.arrayBuffer());
-    return { text, pages: null, quality: qualityOf(text) };
+    const quality = qualityOf(text);
+    const { confidence, note } = simpleConfidence(quality);
+    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
   }
   if (extension === "pptx" || mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
     const text = await extractPptxBuffer(await file.arrayBuffer());
-    return { text, pages: null, quality: qualityOf(text) };
+    const quality = qualityOf(text);
+    const { confidence, note } = simpleConfidence(quality);
+    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
   }
   if (extension === "zip" || mime === "application/zip" || mime === "application/x-zip-compressed") {
     return await extractZip(file, ctx);
   }
   if (["txt", "md", "markdown", "csv", "json", "rtf"].includes(extension) || mime.startsWith("text/")) {
     const text = cleanWhitespace(await file.text());
-    return { text, pages: null, quality: qualityOf(text) };
+    const quality = qualityOf(text);
+    const { confidence, note } = simpleConfidence(quality);
+    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
   }
   if (["doc", "ppt", "xls"].includes(extension)) {
     const text = scrapePrintableStrings(await file.arrayBuffer());
-    return { text, pages: null, quality: qualityOf(text) };
+    const quality = qualityOf(text);
+    const { confidence, note } = simpleConfidence(quality);
+    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
   }
 
   const asText = cleanWhitespace(await file.text().catch(() => ""));
-  if (qualityOf(asText) !== "none") return { text: asText, pages: null, quality: qualityOf(asText) };
+  const asTextQuality = qualityOf(asText);
+  if (asTextQuality !== "none") {
+    const { confidence, note } = simpleConfidence(asTextQuality);
+    return { text: asText, pages: null, quality: asTextQuality, confidence, confidenceNote: note ?? undefined };
+  }
   const scraped = scrapePrintableStrings(await file.arrayBuffer());
-  return { text: scraped, pages: null, quality: qualityOf(scraped) };
+  const scrapedQuality = qualityOf(scraped);
+  const { confidence, note } = simpleConfidence(scrapedQuality);
+  return { text: scraped, pages: null, quality: scrapedQuality, confidence, confidenceNote: note ?? undefined };
 }
 
 /**
  * Extract whatever readable text we can from any uploaded file.
- * Always resolves. Supports: PDF (including OCR fallback for scanned
- * pages with no embedded text layer), photos (OCR), Word (.docx,
+ * Always resolves. Supports: PDF (including per-page OCR fallback for
+ * scanned pages with no embedded text layer), photos (OCR), Word (.docx,
  * best-effort .doc), PowerPoint (.pptx, best-effort .ppt), plain text /
  * Markdown / CSV / JSON, and .zip bundles (recursively — including PDFs
  * and photos inside the zip). Anything else is tried as text first, then
@@ -377,7 +525,7 @@ export async function extractDocumentText(file: File, onProgress?: (p: OcrProgre
     return await extractDocumentTextInner(file, ctx);
   } catch (err) {
     console.error("Text extraction failed for", file.name, err);
-    return { text: "", pages: null, quality: "none" };
+    return { text: "", pages: null, quality: "none", confidence: 0, confidenceNote: "We couldn't read this file." };
   } finally {
     await terminateOcrWorker(ctx);
   }
@@ -450,4 +598,4 @@ export function guessMaterialType(filename: string, textSample?: string): Guessa
     if (haystacks.some((h) => h && patterns.some((p) => p.test(h)))) return type;
   }
   return "Notes";
-      }
+    }
