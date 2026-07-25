@@ -3,16 +3,18 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
   Download, Maximize2, Share2, Heart, Bookmark, BookmarkCheck, WifiOff, Check, AlertTriangle, Youtube, Flame,
+  RefreshCw, Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload,
   useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike,
-  useSavedMaterials, useToggleSaved, type MaterialWithCourse,
+  useSavedMaterials, useToggleSaved, useRegenerateMaterial, type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, saveMaterialOfflineFromDownload, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
-import { forceDownload } from "@/lib/document-files";
+import { forceDownload, fetchFileForOffline, originalFileName } from "@/lib/document-files";
+import { extractDocumentText } from "@/lib/document-text";
 import { DocumentViewer, InlineDocumentPreview } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
 import { loadStudentProfile, saveStudentProfile } from "@/lib/student-profile";
@@ -23,6 +25,7 @@ type MaterialRow = Database["public"]["Tables"]["materials"]["Row"];
 type FlashcardRow = Database["public"]["Tables"]["flashcards"]["Row"];
 type QuizRow = Database["public"]["Tables"]["quiz_questions"]["Row"];
 type Material = MaterialWithCourse;
+type StageStatus = "pending" | "ready" | "failed" | string;
 
 const TABS = [
   { id: "summary", label: "Summary", icon: FileText },
@@ -72,6 +75,7 @@ export function StudyPanel({
   const [downloading, setDownloading] = useState(false);
   const [removingOffline, setRemovingOffline] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [regeneratingLocally, setRegeneratingLocally] = useState(false);
 
   // These share a react-query cache key with the ones FlashcardDeck/Quiz
   // use, so this doesn't cause an extra network round trip.
@@ -107,6 +111,9 @@ export function StudyPanel({
         }) ?? ([material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title)
       : null;
   const recommendedVideos = useYoutubeRecommendations(videoQuery);
+
+  const regenerateMutation = useRegenerateMaterial();
+  const regenerating = regeneratingLocally || regenerateMutation.isPending;
 
   useEffect(() => {
     if (material.status === "ready") bumpStreak.mutate();
@@ -228,9 +235,49 @@ export function StudyPanel({
     saveStudentProfile(updated);
   }
 
+  // Re-reads the originally uploaded file and asks the real AI pipeline
+  // to try again — used when generation failed outright, when one stage
+  // (say, just the quiz) failed while the others succeeded, or when a
+  // material only has the offline-fallback version and the student is
+  // back online. There's no separate "extracted text" storage — the
+  // stored file is the source of truth — so this re-runs the same
+  // extraction the original upload did (see document-text.ts) before
+  // calling the edge function again.
+  async function handleRegenerate() {
+    if (!material.file_path) {
+      toast.error("There's no saved file for this material to regenerate from.");
+      return;
+    }
+    setRegeneratingLocally(true);
+    try {
+      const fetched = await fetchFileForOffline(material.file_path);
+      if (!fetched) throw new Error("Couldn't re-read the saved file.");
+      const filename = originalFileName(material.file_path, material.title);
+      const file = new File([fetched.blob], filename, { type: fetched.mime });
+      const { text, quality } = await extractDocumentText(file);
+      if (quality === "none" || !text.trim()) {
+        toast.error("Couldn't find readable text in this file to regenerate from.");
+        return;
+      }
+      await regenerateMutation.mutateAsync({ materialId: material.id, text, title: material.title });
+      toast.success("Regenerating — this page updates itself as it finishes.");
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "Couldn't restart generation right now — try again in a moment.");
+    } finally {
+      setRegeneratingLocally(false);
+    }
+  }
+
   const isOutdated = material.content_year != null && CURRENT_YEAR - material.content_year >= 5;
   const isProcessing = material.status === "processing";
   const isFailed = material.status === "failed";
+  const summaryStatus: StageStatus = material.summary_status ?? "ready";
+  const flashcardsStatus: StageStatus = material.flashcards_status ?? "ready";
+  const quizStatus: StageStatus = material.quiz_status ?? "ready";
+  const anyStageFailed = summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
+  const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
+  const isOfflineFallback = material.generation_source === "offline-fallback";
+  const canRegenerate = !!material.file_path;
 
   return (
     <div>
@@ -298,32 +345,75 @@ export function StudyPanel({
             <AlertTriangle className="h-3.5 w-3.5" /> From {material.content_year} — may be outdated
           </span>
         )}
+        {isLowConfidence && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper"
+            title={material.content_confidence_note ?? undefined}
+          >
+            <Info className="h-3.5 w-3.5" /> {material.content_confidence_note ?? "This may be missing some details"}
+          </span>
+        )}
       </div>
 
       {isProcessing ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-10 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-8 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          <div className="text-sm font-semibold text-foreground">Still generating study tools…</div>
+          <div className="text-sm font-semibold text-foreground">Generating your study tools…</div>
+          <div className="w-full space-y-1.5 text-left">
+            <StageRow label="Summary" status={summaryStatus} error={material.summary_error} />
+            <StageRow label="Flashcards" status={flashcardsStatus} error={material.flashcards_error} />
+            <StageRow label="Quiz" status={quizStatus} error={material.quiz_error} />
+          </div>
           <p className="max-w-xs text-xs text-muted-foreground">
-            This page updates itself the moment it's ready — no need to refresh. The file above is already yours to view or download in the meantime.
+            This page updates itself as each part finishes — no need to refresh. The file above is already yours to view or download in the meantime.
           </p>
         </div>
       ) : isFailed ? (
         <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6 text-sm text-foreground">
-          <p>
-            {material.processing_error
-              ? "Generation didn't finish for this one. Here's why:"
-              : "Generation didn't finish for this one. Try re-uploading it, or request it and an admin will take a look."}
-          </p>
+          <p>Generation didn't finish for this one.</p>
           {material.processing_error && (
             <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface px-3 py-2 font-mono text-xs text-destructive">
               {material.processing_error}
             </p>
           )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {canRegenerate ? (
+              <button onClick={handleRegenerate} disabled={regenerating || !isOnline} className={pillBtn}>
+                <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} />
+                {regenerating ? "Regenerating…" : !isOnline ? "Regenerate (needs internet)" : "Regenerate"}
+              </button>
+            ) : (
+              <span className="text-xs text-muted-foreground">Try re-uploading it, or request it and an admin will take a look.</span>
+            )}
+          </div>
           <p className="mt-2 text-xs text-muted-foreground">The file itself is safe either way — view or download it above.</p>
         </div>
       ) : (
         <>
+          {isOfflineFallback && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-copper/30 bg-copper/10 px-3 py-2 text-xs font-medium text-copper">
+              <span>These study tools were generated offline (a lighter-weight local version).</span>
+              {canRegenerate && (
+                <button onClick={handleRegenerate} disabled={regenerating || !isOnline} className="inline-flex shrink-0 items-center gap-1 font-semibold disabled:opacity-50">
+                  <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> {regenerating ? "Regenerating…" : "Regenerate with AI"}
+                </button>
+              )}
+            </div>
+          )}
+          {anyStageFailed && !isOfflineFallback && (
+            <div className="mb-4 space-y-1.5">
+              {summaryStatus === "failed" && (
+                <StageRow label="Summary" status="failed" error={material.summary_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+              )}
+              {flashcardsStatus === "failed" && (
+                <StageRow label="Flashcards" status="failed" error={material.flashcards_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+              )}
+              {quizStatus === "failed" && (
+                <StageRow label="Quiz" status="failed" error={material.quiz_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+              )}
+            </div>
+          )}
+
           <div className="relative flex gap-1 rounded-xl border border-border bg-surface-muted p-1">
             {TABS.map((t) => (
               <button
@@ -356,7 +446,26 @@ export function StudyPanel({
               >
                 {tab === "summary" && (
                   <div className="rounded-2xl border border-border bg-card p-5 text-sm leading-relaxed text-foreground">
-                    {material.summary || "No summary yet."}
+                    {summaryStatus === "pending" ? (
+                      <span className="inline-flex items-center gap-2 text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Still generating the summary…
+                      </span>
+                    ) : summaryStatus === "failed" ? (
+                      <div className="text-muted-foreground">
+                        <p>{material.summary_error || "The summary couldn't be generated."}</p>
+                        {canRegenerate && (
+                          <button
+                            onClick={handleRegenerate}
+                            disabled={regenerating || !isOnline}
+                            className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary disabled:opacity-50"
+                          >
+                            <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> Regenerate
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      material.summary || "No summary yet."
+                    )}
                     {material.tags && material.tags.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-1.5">
                         {material.tags.map((tag) => (
@@ -366,9 +475,26 @@ export function StudyPanel({
                     )}
                   </div>
                 )}
-                {tab === "flashcards" && <FlashcardDeck materialId={material.id} initialCards={offlineBundle?.flashcards} />}
+                {tab === "flashcards" && (
+                  <FlashcardDeck
+                    materialId={material.id}
+                    initialCards={offlineBundle?.flashcards}
+                    status={flashcardsStatus}
+                    error={material.flashcards_error}
+                    onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                    regenerating={regenerating || !isOnline}
+                  />
+                )}
                 {tab === "quiz" && (
-                  <Quiz materialId={material.id} initialQuestions={offlineBundle?.quiz} onSubmit={handleQuizSubmitted} />
+                  <Quiz
+                    materialId={material.id}
+                    initialQuestions={offlineBundle?.quiz}
+                    onSubmit={handleQuizSubmitted}
+                    status={quizStatus}
+                    error={material.quiz_error}
+                    onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                    regenerating={regenerating || !isOnline}
+                  />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -419,6 +545,43 @@ export function StudyPanel({
   );
 }
 
+function StageRow({
+  label, status, error, onRegenerate, regenerating,
+}: {
+  label: string;
+  status: StageStatus;
+  error?: string | null;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-center gap-2">
+        {status === "ready" ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-teal" />
+        ) : status === "failed" ? (
+          <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+        ) : (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+        )}
+        <span className="shrink-0 font-medium text-foreground">{label}</span>
+        <span className="truncate text-muted-foreground">
+          {status === "ready" ? "Ready" : status === "failed" ? error || "Couldn't generate" : "Generating…"}
+        </span>
+      </div>
+      {status === "failed" && onRegenerate && (
+        <button
+          onClick={onRegenerate}
+          disabled={regenerating}
+          className="inline-flex shrink-0 items-center gap-1 font-semibold text-primary disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> Regenerate
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RelatedList({ title, items }: { title: string; items: MaterialRow[] }) {
   return (
     <div className="mt-8">
@@ -445,7 +608,16 @@ function RelatedList({ title, items }: { title: string; items: MaterialRow[] }) 
   );
 }
 
-function FlashcardDeck({ materialId, initialCards }: { materialId: string; initialCards?: FlashcardRow[] }) {
+function FlashcardDeck({
+  materialId, initialCards, status, error, onRegenerate, regenerating,
+}: {
+  materialId: string;
+  initialCards?: FlashcardRow[];
+  status?: StageStatus;
+  error?: string | null;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
+}) {
   const shouldFetch = !initialCards;
   const { data: fetchedCards, isLoading } = useFlashcards(shouldFetch ? materialId : "");
   const cards = initialCards ?? fetchedCards;
@@ -455,7 +627,11 @@ function FlashcardDeck({ materialId, initialCards }: { materialId: string; initi
   const [dir, setDir] = useState(1);
 
   if (shouldFetch && isLoading) return <SkeletonCard />;
-  if (!cards?.length) return <EmptyState label="No flashcards for this one yet." />;
+  if (!cards?.length) {
+    if (status === "pending") return <PendingState label="Flashcards are still generating…" />;
+    if (status === "failed") return <FailedState label={error || "Flashcards couldn't be generated."} onRegenerate={onRegenerate} regenerating={regenerating} />;
+    return <EmptyState label="No flashcards for this one yet." />;
+  }
 
   const card = cards[i];
   const go = (delta: number) => {
@@ -513,11 +689,19 @@ function Quiz({
   materialId,
   initialQuestions,
   onSubmit,
+  status,
+  error,
+  onRegenerate,
+  regenerating,
 }: {
   materialId: string;
   initialQuestions?: QuizRow[];
   /** Called once, right when "Check answers" is tapped — feeds the local Learnova AI student-memory system. */
   onSubmit?: (score: number, total: number, weakQuestions: string[], timeSpentSeconds: number) => void;
+  status?: StageStatus;
+  error?: string | null;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
 }) {
   const shouldFetch = !initialQuestions;
   const { data: fetchedQuestions, isLoading } = useQuizQuestions(shouldFetch ? materialId : "");
@@ -528,7 +712,11 @@ function Quiz({
   const startedAtRef = useRef(Date.now());
 
   if (shouldFetch && isLoading) return <SkeletonCard />;
-  if (!questions?.length) return <EmptyState label="No quiz for this one yet." />;
+  if (!questions?.length) {
+    if (status === "pending") return <PendingState label="The quiz is still generating…" />;
+    if (status === "failed") return <FailedState label={error || "The quiz couldn't be generated."} onRegenerate={onRegenerate} regenerating={regenerating} />;
+    return <EmptyState label="No quiz for this one yet." />;
+  }
 
   const score = questions.filter((q) => answers[q.id] === q.correct_index).length;
 
@@ -614,4 +802,27 @@ function SkeletonCard() {
 }
 function EmptyState({ label }: { label: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
-         }
+}
+function PendingState({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" /> {label}
+    </div>
+  );
+}
+function FailedState({ label, onRegenerate, regenerating }: { label: string; onRegenerate?: () => void; regenerating?: boolean }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">
+      <p>{label}</p>
+      {onRegenerate && (
+        <button
+          onClick={onRegenerate}
+          disabled={regenerating}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} /> {regenerating ? "Regenerating…" : "Regenerate"}
+        </button>
+      )}
+    </div>
+  );
+    }
