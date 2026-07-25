@@ -252,6 +252,59 @@ export function useMaterial(id: string) {
       return (data ?? null) as MaterialWithCourse | null;
     },
     enabled: !!id,
+    // Generation now happens after the material is already saved (see
+    // DocumentUpload.tsx and supabase/functions/process-material)
+    // instead of blocking the upload screen — so this page needs to
+    // notice on its own when each part finishes. This is what actually
+    // makes good on StudyPanel's "this page updates itself" message,
+    // which previously had no polling or subscription behind it at all.
+    // Stops automatically once nothing is left pending, so a
+    // fully-settled material doesn't keep polling forever.
+    refetchInterval: (query) => {
+      const m = query.state.data;
+      if (!m) return false;
+      const stillGenerating =
+        m.status === "processing" ||
+        m.summary_status === "pending" ||
+        m.flashcards_status === "pending" ||
+        m.quiz_status === "pending";
+      return stillGenerating ? 4000 : false;
+    },
+  });
+}
+
+// Re-runs the real AI pipeline for a material that's stuck, failed
+// outright, partially failed (say, only the quiz didn't generate), or
+// currently only has the offline-fallback version. The caller (see
+// StudyPanel.tsx) re-reads the stored file and re-extracts its text —
+// there's no server-side copy of the raw extracted text to resend, the
+// uploaded file is the source of truth.
+export function useRegenerateMaterial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { materialId: string; text: string; title: string }) => {
+      // Flip back to "processing" first — the edge function refuses to
+      // run on a material that isn't currently awaiting processing, and
+      // this also makes the study page's per-stage checklist reappear
+      // immediately instead of still showing the old failed/partial
+      // state until the network call returns.
+      const { error: statusError } = await supabase
+        .from("materials")
+        .update({ status: "processing", processing_error: null })
+        .eq("id", input.materialId);
+      if (statusError) throw statusError;
+
+      const { error } = await supabase.functions.invoke("process-material", {
+        body: { materialId: input.materialId, text: input.text, title: input.title },
+      });
+      if (error) throw error;
+    },
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ["material", input.materialId] });
+      qc.invalidateQueries({ queryKey: ["flashcards", input.materialId] });
+      qc.invalidateQueries({ queryKey: ["quiz", input.materialId] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+    },
   });
 }
 
@@ -882,4 +935,4 @@ export function useUpdateSiteSettings() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-    }
+  }
