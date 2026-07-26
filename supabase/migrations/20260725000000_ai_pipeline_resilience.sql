@@ -46,7 +46,7 @@ alter table public.materials
 
 alter table public.materials
   add column if not exists generation_source text
-  check (generation_source is null or generation_source in ('ai', 'offline-fallback'));
+  check (generation_source is null or generation_source in ('ai', 'local-fallback'));
 
 -- Backfill existing rows so materials processed before this migration
 -- don't sit there looking like they're "still generating" forever (the
