@@ -118,25 +118,50 @@ export async function saveMaterialOffline(bundle: {
 // via useFlashcards/useQuizQuestions. Pass the file if the caller
 // already fetched it (e.g. forceDownload() now returns the Blob it
 // downloaded) to avoid fetching the same bytes twice — real bandwidth on
-// mobile data otherwise. Best-effort throughout: never throws. Whatever
-// download this is paired with has already succeeded by the time it's
-// called — failing to ALSO cache it offline is a missed bonus, not
-// something that should surface as an error on top of a successful
-// download.
+// mobile data otherwise.
+//
+// Each of the three fetches (flashcards, quiz, file) is independent now
+// — this used to be a single Promise.all, so if any ONE of them failed
+// (a flaky flashcards fetch, an RLS hiccup, a dropped connection), the
+// whole save was thrown away, including the file — even though the
+// download this function is called right after had already succeeded.
+// A student could watch a file finish downloading and then just not
+// find it in their Library a minute later, with nothing telling them
+// why. Now whichever pieces succeed get saved; only genuinely losing
+// all three is worth logging. Best-effort throughout: never throws.
+// Whatever download this is paired with has already succeeded by the
+// time it's called — failing to ALSO cache it offline is a missed
+// bonus, not something that should surface as an error on top of a
+// successful download.
 export async function saveMaterialOfflineFromDownload(
   material: MaterialWithCourse,
   file?: { blob: Blob; mime: string } | null,
 ): Promise<void> {
+  const [flashcardsResult, quizResult, fileResult] = await Promise.allSettled([
+    supabase.from("flashcards").select("*").eq("material_id", material.id),
+    supabase.from("quiz_questions").select("*").eq("material_id", material.id),
+    file ? Promise.resolve(file) : material.file_path ? fetchFileForOffline(material.file_path) : Promise.resolve(null),
+  ]);
+
+  if (flashcardsResult.status === "rejected") {
+    console.error("Offline save: couldn't fetch flashcards, saving without them:", flashcardsResult.reason);
+  }
+  if (quizResult.status === "rejected") {
+    console.error("Offline save: couldn't fetch the quiz, saving without it:", quizResult.reason);
+  }
+  if (fileResult.status === "rejected") {
+    console.error("Offline save: couldn't fetch the file, saving metadata only:", fileResult.reason);
+  }
+
+  const flashcards = flashcardsResult.status === "fulfilled" ? (flashcardsResult.value.data ?? []) : [];
+  const quiz = quizResult.status === "fulfilled" ? (quizResult.value.data ?? []) : [];
+  const fetchedFile = fileResult.status === "fulfilled" ? fileResult.value : null;
+
   try {
-    const [{ data: flashcards }, { data: quiz }, fetchedFile] = await Promise.all([
-      supabase.from("flashcards").select("*").eq("material_id", material.id),
-      supabase.from("quiz_questions").select("*").eq("material_id", material.id),
-      file ? Promise.resolve(file) : material.file_path ? fetchFileForOffline(material.file_path) : Promise.resolve(null),
-    ]);
     await saveMaterialOffline({
       material,
-      flashcards: flashcards ?? [],
-      quiz: quiz ?? [],
+      flashcards,
+      quiz,
       fileBlob: fetchedFile?.blob,
       fileMime: fetchedFile?.mime,
     });
@@ -149,7 +174,8 @@ export async function getOfflineMaterial(id: string): Promise<OfflineBundle | nu
   try {
     const result = await withStore<OfflineBundle | undefined>("readonly", (store) => store.get(id));
     return result ?? null;
-  } catch {
+  } catch (e) {
+    console.error("Couldn't read offline storage:", e);
     return null;
   }
 }
@@ -179,7 +205,8 @@ export async function listOfflineMaterials(): Promise<OfflineBundle[]> {
   try {
     const result = await withStore<OfflineBundle[]>("readonly", (store) => store.getAll());
     return result ?? [];
-  } catch {
+  } catch (e) {
+    console.error("Couldn't list offline storage:", e);
     return [];
   }
 }
@@ -237,7 +264,8 @@ export async function deviceStorageEstimate(): Promise<{ usage: number; quota: n
     const { usage, quota } = await navigator.storage.estimate();
     if (usage == null || quota == null) return null;
     return { usage, quota };
-  } catch {
+  } catch (e) {
+    console.error("Couldn't read device storage estimate:", e);
     return null;
   }
 }
@@ -327,4 +355,4 @@ export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loa
   }, [limit]);
 
   return state;
-}
+      }
