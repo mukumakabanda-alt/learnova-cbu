@@ -119,14 +119,18 @@ function runAIOffMainThread(
 // its own per-stage status tracking, so on success there's nothing left
 // to do here.
 //
-// Fallback path: only reached if that call itself couldn't be made
+// Fallback path: reached whenever that call itself couldn't be made
 // (thrown/network-level failure, not a normal in-band error — the edge
-// function handles its own errors and always still returns a response).
-// If the browser is genuinely offline, the local LearnovaAI engine runs
-// instead so the student isn't left with nothing — tagged
-// generation_source: "offline-fallback" so the study page can be honest
-// about which kind of result it's showing and offer to regenerate with
-// the real thing once they're back online.
+// function handles its own errors and always still returns a response
+// on success). This used to only fall back to the local engine when
+// navigator.onLine was false — so a student who was online but hit a
+// misconfigured or temporarily-down AI gateway (say, a missing
+// LOVABLE_API_KEY) got nothing at all instead of a working local
+// version. The local LearnovaAI engine now runs on ANY primary failure,
+// online or not, so the student isn't left with a dead end either way —
+// tagged generation_source: "local-fallback" so the study page can be
+// honest about which kind of result it's showing and offer to
+// regenerate with the real thing once whatever broke is fixed.
 async function runBackgroundGeneration(params: {
   materialId: string;
   text: string;
@@ -136,6 +140,7 @@ async function runBackgroundGeneration(params: {
   validYear: number | null;
 }): Promise<void> {
   const { materialId, text, title, courseCode, finalType, validYear } = params;
+  let primaryError: unknown = null;
 
   try {
     const { error } = await supabase.functions.invoke("process-material", {
@@ -144,23 +149,8 @@ async function runBackgroundGeneration(params: {
     if (error) throw error;
     return;
   } catch (e) {
-    console.error("AI gateway call failed:", e);
-    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-
-    if (!offline) {
-      await supabase
-        .from("materials")
-        .update({
-          status: "failed",
-          processing_error: describeUploadError(e),
-          summary_status: "failed",
-          flashcards_status: "failed",
-          quiz_status: "failed",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", materialId);
-      return;
-    }
+    primaryError = e;
+    console.error("AI gateway call failed, falling back to the local engine:", e);
 
     try {
       const result = await runAIOffMainThread(text, {
@@ -204,25 +194,25 @@ async function runBackgroundGeneration(params: {
           status: anySucceeded ? "ready" : "failed",
           ...(summary ? { summary, tags: tags.length ? tags : [] } : {}),
           summary_status: summary ? "ready" : "failed",
-          summary_error: summary ? null : "Offline mode couldn't produce a summary for this document.",
+          summary_error: summary ? null : "The local backup couldn't produce a summary for this document.",
           flashcards_status: flashcards.length ? "ready" : "failed",
-          flashcards_error: flashcards.length ? null : "Offline mode couldn't produce flashcards for this document.",
+          flashcards_error: flashcards.length ? null : "The local backup couldn't produce flashcards for this document.",
           quiz_status: quiz.length ? "ready" : "failed",
-          quiz_error: quiz.length ? null : "Offline mode couldn't produce a quiz for this document.",
-          generation_source: "offline-fallback",
+          quiz_error: quiz.length ? null : "The local backup couldn't produce a quiz for this document.",
+          generation_source: "local-fallback",
           processing_error: anySucceeded
-            ? "Generated offline (a lighter-weight local version) — reconnect and tap Regenerate for the full AI version."
-            : "You're offline and local generation didn't find enough usable text either. Reconnect and tap Regenerate.",
+            ? `Generated with a lighter local version — the full AI pipeline didn't respond (${describeUploadError(primaryError)}). Tap Regenerate to try it again.`
+            : `The AI pipeline didn't respond (${describeUploadError(primaryError)}), and the local backup couldn't find enough usable text either. Tap Regenerate to try again.`,
           updated_at: new Date().toISOString(),
         })
         .eq("id", materialId);
     } catch (fallbackError) {
-      console.error("Offline fallback generation failed:", fallbackError);
+      console.error("Local fallback generation also failed:", fallbackError);
       await supabase
         .from("materials")
         .update({
           status: "failed",
-          processing_error: "You're offline and we couldn't generate study tools locally either. Reconnect and tap Regenerate.",
+          processing_error: describeUploadError(primaryError),
           summary_status: "failed",
           flashcards_status: "failed",
           quiz_status: "failed",
@@ -519,4 +509,4 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       </motion.div>
     </div>
   );
-    }
+}
