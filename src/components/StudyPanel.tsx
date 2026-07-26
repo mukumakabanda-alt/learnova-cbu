@@ -12,7 +12,7 @@ import {
   useSavedMaterials, useToggleSaved, useRegenerateMaterial, type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOffline, saveMaterialOfflineFromDownload, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
+import { saveMaterialOffline, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
 import { forceDownload, fetchFileForOffline, originalFileName } from "@/lib/document-files";
 import { extractDocumentText } from "@/lib/document-text";
 import { DocumentViewer, InlineDocumentPreview } from "@/components/DocumentViewer";
@@ -238,8 +238,8 @@ export function StudyPanel({
   // Re-reads the originally uploaded file and asks the real AI pipeline
   // to try again — used when generation failed outright, when one stage
   // (say, just the quiz) failed while the others succeeded, or when a
-  // material only has the offline-fallback version and the student is
-  // back online. There's no separate "extracted text" storage — the
+  // material only has the local-fallback version and a real AI pipeline
+  // is reachable now. There's no separate "extracted text" storage — the
   // stored file is the source of truth — so this re-runs the same
   // extraction the original upload did (see document-text.ts) before
   // calling the edge function again.
@@ -276,7 +276,7 @@ export function StudyPanel({
   const quizStatus: StageStatus = material.quiz_status ?? "ready";
   const anyStageFailed = summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
   const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
-  const isOfflineFallback = material.generation_source === "offline-fallback";
+  const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path;
 
   return (
@@ -390,9 +390,9 @@ export function StudyPanel({
         </div>
       ) : (
         <>
-          {isOfflineFallback && (
+          {isLocalFallback && (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-copper/30 bg-copper/10 px-3 py-2 text-xs font-medium text-copper">
-              <span>These study tools were generated offline (a lighter-weight local version).</span>
+              <span>These study tools came from a lighter local version — the full AI pipeline didn't respond when this was generated.</span>
               {canRegenerate && (
                 <button onClick={handleRegenerate} disabled={regenerating || !isOnline} className="inline-flex shrink-0 items-center gap-1 font-semibold disabled:opacity-50">
                   <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> {regenerating ? "Regenerating…" : "Regenerate with AI"}
@@ -400,7 +400,7 @@ export function StudyPanel({
               )}
             </div>
           )}
-          {anyStageFailed && !isOfflineFallback && (
+          {anyStageFailed && !isLocalFallback && (
             <div className="mb-4 space-y-1.5">
               {summaryStatus === "failed" && (
                 <StageRow label="Summary" status="failed" error={material.summary_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
