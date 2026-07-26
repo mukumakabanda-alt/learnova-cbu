@@ -93,38 +93,69 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
         }
 
         const containerWidth = Math.max(container.clientWidth || 360, 280);
+        let pagesFailed = 0;
 
+        // Each page renders in its own try/catch now. This used to be
+        // one big loop where a single page throwing (some PDFs — often
+        // ones with an embedded ICC/CMYK colour profile — can trip an
+        // internal pdf.js error, "a.toHex is not a function," deep in
+        // its own colour-space handling; that's a pdf.js-internal issue
+        // on specific files, not something this app is doing wrong)
+        // took the ENTIRE preview down, even when every other page
+        // would have rendered fine. Now that one page is skipped with a
+        // visible note, and the rest of the document still shows.
         for (let i = 1; i <= pagesToRender; i++) {
           if (cancelled) return;
-          const page = await pdfDoc.getPage(i);
-          const unscaled = page.getViewport({ scale: 1 });
-          const scale = Math.min(1.8, containerWidth / unscaled.width);
-          const viewport = page.getViewport({ scale });
+          try {
+            const page = await pdfDoc.getPage(i);
+            const unscaled = page.getViewport({ scale: 1 });
+            const scale = Math.min(1.8, containerWidth / unscaled.width);
+            const viewport = page.getViewport({ scale });
 
-          const canvas = document.createElement("canvas");
-          const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-          canvas.width = Math.floor(viewport.width * outputScale);
-          canvas.height = Math.floor(viewport.height * outputScale);
-          canvas.style.width = `${Math.floor(viewport.width)}px`;
-          canvas.style.height = `${Math.floor(viewport.height)}px`;
-          canvas.className =
-            "mx-auto mb-3 block max-w-full rounded-lg border border-border shadow-soft bg-white";
+            const canvas = document.createElement("canvas");
+            const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = `${Math.floor(viewport.width)}px`;
+            canvas.style.height = `${Math.floor(viewport.height)}px`;
+            canvas.className =
+              "mx-auto mb-3 block max-w-full rounded-lg border border-border shadow-soft bg-white";
 
-          const ctx = canvas.getContext("2d");
-          if (!ctx) continue;
-          ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+            const ctx = canvas.getContext("2d");
+            if (!ctx) continue;
+            ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
 
-          const renderTask = page.render({
-            canvasContext: ctx,
-            viewport,
-            canvas,
-          });
-          await renderTask.promise;
-          if (cancelled) return;
-          container.appendChild(canvas);
+            // Only canvasContext + viewport — pdf.js derives everything
+            // else it needs from those two. A separate `canvas` field
+            // used to be passed alongside canvasContext too; dropping it
+            // is a conservative step back to the more universally-
+            // compatible calling convention, on the chance it's related
+            // to the colour-space error above (this couldn't be fully
+            // confirmed without live reproduction, so the per-page
+            // isolation above is the fix actually being relied on here).
+            const renderTask = page.render({ canvasContext: ctx, viewport });
+            await renderTask.promise;
+            if (cancelled) return;
+            container.appendChild(canvas);
+          } catch (pageError) {
+            console.error(`PDF page ${i} render failed:`, pageError);
+            pagesFailed++;
+            const notice = document.createElement("div");
+            notice.className =
+              "mx-auto mb-3 max-w-full rounded-lg border border-dashed border-border bg-surface-muted px-4 py-8 text-center text-xs text-muted-foreground";
+            notice.textContent = `Page ${i} couldn't be rendered — the rest of the document is unaffected.`;
+            container.appendChild(notice);
+          }
         }
 
-        if (!cancelled) setStatus("ready");
+        if (cancelled) return;
+        if (pagesFailed >= pagesToRender) {
+          // Every single page failed — functionally the same as the
+          // file not rendering at all, so fall through to the existing
+          // "download instead" state rather than a page full of notices.
+          throw new Error("None of this PDF's pages could be rendered in-browser.");
+        }
+        setStatus("ready");
       } catch (e) {
         console.error("PDF render failed:", e);
         if (!cancelled) {
@@ -928,4 +959,4 @@ export function InlineDocumentPreview({
       </div>
     </div>
   );
-      }
+          }
