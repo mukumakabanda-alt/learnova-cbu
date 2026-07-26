@@ -67,14 +67,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (active) setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event: string, newSession: any) => {
+    // The initial-boot check above already awaits loadProfile before
+    // clearing `loading` — but this callback, which fires on every
+    // SIGN-IN during the session (not just the one on page load), used
+    // to call loadProfile() without awaiting it too, and never touched
+    // `loading` at all. So right after a successful sign-in,
+    // `session`/`user` flipped to non-null immediately, while `profile`
+    // stayed null for however long the fetch above took — a real (if
+    // brief) window where a component gating on "no profile yet" reads
+    // identically to "signed out" (the Dashboard does exactly this) can
+    // flash the wrong screen at a freshly-signed-in user.
+    //
+    // Only SIGNED_IN (and USER_UPDATED, e.g. after editing the profile
+    // elsewhere) actually need to gate `loading` and re-fetch — a
+    // TOKEN_REFRESHED event fires automatically in the background
+    // roughly once an hour for a user who's already fully loaded and
+    // using the app; treating that the same way would flash everyone
+    // back to a loading state on a timer for no reason.
+    const { data: sub } = supabase.auth.onAuthStateChange((event: string, newSession: any) => {
       setSession(newSession);
-      if (newSession?.user) {
-        loadProfile(newSession.user.id);
-      } else {
+
+      if (event === "TOKEN_REFRESHED") return;
+
+      if (!newSession?.user) {
         setProfile(null);
         setRoles([]);
+        return;
       }
+
+      setLoading(true);
+      loadProfile(newSession.user.id).finally(() => {
+        if (active) setLoading(false);
+      });
     });
 
     return () => {
