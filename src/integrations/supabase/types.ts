@@ -196,18 +196,27 @@ export type Database = {
       }
       materials: {
         Row: {
+          content_confidence: number | null
+          content_confidence_note: string | null
           content_year: number | null
           course_code: string | null
           created_at: string
           download_count: number
           file_path: string | null
+          flashcards_error: string | null
+          flashcards_status: string
+          generation_source: string | null
           id: string
           likes_count: number
           pages: number | null
           processing_error: string | null
+          quiz_error: string | null
+          quiz_status: string
           source: string
           status: Database["public"]["Enums"]["material_status"]
           summary: string | null
+          summary_error: string | null
+          summary_status: string
           tags: string[]
           title: string
           type: string
@@ -215,18 +224,27 @@ export type Database = {
           uploaded_by: string | null
         }
         Insert: {
+          content_confidence?: number | null
+          content_confidence_note?: string | null
           content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
           file_path?: string | null
+          flashcards_error?: string | null
+          flashcards_status?: string
+          generation_source?: string | null
           id?: string
           likes_count?: number
           pages?: number | null
           processing_error?: string | null
+          quiz_error?: string | null
+          quiz_status?: string
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           summary?: string | null
+          summary_error?: string | null
+          summary_status?: string
           tags?: string[]
           title: string
           type?: string
@@ -234,18 +252,27 @@ export type Database = {
           uploaded_by?: string | null
         }
         Update: {
+          content_confidence?: number | null
+          content_confidence_note?: string | null
           content_year?: number | null
           course_code?: string | null
           created_at?: string
           download_count?: number
           file_path?: string | null
+          flashcards_error?: string | null
+          flashcards_status?: string
+          generation_source?: string | null
           id?: string
           likes_count?: number
           pages?: number | null
           processing_error?: string | null
+          quiz_error?: string | null
+          quiz_status?: string
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           summary?: string | null
+          summary_error?: string | null
+          summary_status?: string
           tags?: string[]
           title?: string
           type?: string
