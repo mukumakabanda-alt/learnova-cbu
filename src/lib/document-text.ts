@@ -269,8 +269,9 @@ async function loadJSZip() {
 // machine-readable cover page) are common enough that this matters.
 async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocument> {
   const pdfjsLib: any = await loadPdfjs();
+  const buffer = await file.arrayBuffer();
 
-  const pdf = await (pdfjsLib as any).getDocument({ data: buffer }).promise;
+  const pdf = await (pdfjsLib as any).getDocument({ data: new Uint8Array(buffer) }).promise;
   const totalPages: number = pdf.numPages;
 
   const nativePages: string[] = new Array(totalPages).fill("");
