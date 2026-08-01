@@ -17,6 +17,7 @@
 // unreadable/corrupted file, and even that resolves rather than rejects.
 
 import "@/lib/polyfills"; // must load before pdf.js — see that file for why
+import { loadPdfjs } from "@/lib/pdfjs";
 
 export type ExtractedDocument = {
   text: string;
@@ -267,12 +268,8 @@ async function loadJSZip() {
 // scanned diagram pages, or a mostly-scanned set of notes with one
 // machine-readable cover page) are common enough that this matters.
 async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocument> {
-  const [pdfjsLib, workerUrlMod] = await Promise.all([
-    import("pdfjs-dist"),
-    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
-  ]);
-  (pdfjsLib as any).GlobalWorkerOptions.workerSrc = (workerUrlMod as any).default;
-  const buffer = await file.arrayBuffer();
+  const pdfjsLib: any = await loadPdfjs();
+
   const pdf = await (pdfjsLib as any).getDocument({ data: buffer }).promise;
   const totalPages: number = pdf.numPages;
 
