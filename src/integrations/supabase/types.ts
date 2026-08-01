@@ -476,6 +476,33 @@ export type Database = {
           },
         ]
       }
+      site_settings: {
+        Row: {
+          created_at: string
+          featured_course_codes: string[]
+          homepage_subtitle: string
+          homepage_title: string
+          id: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          featured_course_codes?: string[]
+          homepage_subtitle?: string
+          homepage_title?: string
+          id?: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          featured_course_codes?: string[]
+          homepage_subtitle?: string
+          homepage_title?: string
+          id?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
