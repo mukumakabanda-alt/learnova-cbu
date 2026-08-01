@@ -22,6 +22,7 @@
 // to both automatically.
 
 import "@/lib/polyfills";
+import { loadPdfjs } from "@/lib/pdfjs";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
