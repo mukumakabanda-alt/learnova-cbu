@@ -326,7 +326,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
     ctx.onProgress?.({ stage: `Reading page ${n + 1} of ${ocrableCount}…`, progress: n / ocrableCount });
     try {
       const canvas = await renderPdfPageToCanvas(pdf, pageNumber);
-      const { data } = await withTimeout(worker.recognize(canvas), OCR_PAGE_TIMEOUT_MS, `Reading page ${pageNumber}`);
+      const { data } = (await withTimeout(worker.recognize(canvas) as Promise<unknown>, OCR_PAGE_TIMEOUT_MS, `Reading page ${pageNumber}`)) as { data?: { text?: string } };
       const ocrText = cleanWhitespace(data?.text ?? "");
       // Keep whichever is longer — occasionally the native layer had
       // *something* just under the threshold that OCR actually misses.
@@ -365,7 +365,7 @@ async function extractImage(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDo
   ctx.onProgress?.({ stage: "Reading the image…", progress: 0 });
   const worker = await getOcrWorker(ctx);
   try {
-    const { data } = await withTimeout(worker.recognize(file), OCR_PAGE_TIMEOUT_MS, "Reading the image");
+    const { data } = (await withTimeout(worker.recognize(file) as Promise<unknown>, OCR_PAGE_TIMEOUT_MS, "Reading the image")) as { data?: { text?: string } };
     ctx.budget.remaining--;
     const text = cleanWhitespace(data?.text ?? "");
     const quality = qualityOf(text);

@@ -170,7 +170,7 @@ function CoursePage() {
     );
   }
 
-  const courseInfo = { title: course.title, code: course.code, programme_code: course.programme_code };
+  const courseInfo = { title: course.title, code: course.code, programme_code: course.programme_code ?? "" };
 
   return (
     <div className="min-h-screen bg-background pb-20">
