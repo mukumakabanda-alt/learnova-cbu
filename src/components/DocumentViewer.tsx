@@ -22,6 +22,7 @@
 // to both automatically.
 
 import "@/lib/polyfills";
+import { loadPdfjs } from "@/lib/pdfjs";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -64,13 +65,7 @@ function PdfCanvasViewer({ blob }: { blob: Blob }) {
           );
         }
 
-        const [pdfjsLib, workerUrlMod] = await Promise.all([
-          import("pdfjs-dist"),
-          import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
-        ]);
-
-        const lib: any = pdfjsLib;
-        lib.GlobalWorkerOptions.workerSrc = (workerUrlMod as any).default;
+        const lib: any = await loadPdfjs();
 
         const buffer = await blob.arrayBuffer();
         if (cancelled) return;

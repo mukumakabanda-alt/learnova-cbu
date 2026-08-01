@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as StudyRouteImport } from './routes/study'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as OfflineRouteImport } from './routes/offline'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as AuthRouteImport } from './routes/auth'
@@ -27,6 +28,11 @@ const StudyRoute = StudyRouteImport.update({
 const SearchRoute = SearchRouteImport.update({
   id: '/search',
   path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OfflineRoute = OfflineRouteImport.update({
+  id: '/offline',
+  path: '/offline',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
+  '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
   '/courses/$code': typeof CoursesCodeRoute
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
+  '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
   '/courses/$code': typeof CoursesCodeRoute
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
+  '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
   '/courses/$code': typeof CoursesCodeRoute
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
+    | '/offline'
     | '/search'
     | '/study'
     | '/courses/$code'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
+    | '/offline'
     | '/search'
     | '/study'
     | '/courses/$code'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
+    | '/offline'
     | '/search'
     | '/study'
     | '/courses/$code'
@@ -141,6 +153,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   BrowseRoute: typeof BrowseRoute
   DashboardRoute: typeof DashboardRoute
+  OfflineRoute: typeof OfflineRoute
   SearchRoute: typeof SearchRoute
   StudyRoute: typeof StudyRouteWithChildren
   CoursesCodeRoute: typeof CoursesCodeRoute
@@ -160,6 +173,13 @@ declare module '@tanstack/react-router' {
       path: '/search'
       fullPath: '/search'
       preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/offline': {
+      id: '/offline'
+      path: '/offline'
+      fullPath: '/offline'
+      preLoaderRoute: typeof OfflineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -230,6 +250,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   BrowseRoute: BrowseRoute,
   DashboardRoute: DashboardRoute,
+  OfflineRoute: OfflineRoute,
   SearchRoute: SearchRoute,
   StudyRoute: StudyRouteWithChildren,
   CoursesCodeRoute: CoursesCodeRoute,
@@ -237,13 +258,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
