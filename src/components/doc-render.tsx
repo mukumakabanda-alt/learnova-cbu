@@ -782,10 +782,17 @@ export function BlobRenderer({
       if (!active) return;
       // Bytes win, except when sniffing was inconclusive, or when the
       // name is more specific than a generic zip/text signature.
-      if (sniffed !== "unknown") {
-        if (resolved === "unknown") resolved = sniffed;
-        else if (sniffed !== resolved && sniffed !== "text") resolved = sniffed;
+      // Bytes normally win (a mislabelled upload still opens correctly),
+      // except when sniffing was inconclusive or only generic — a bare
+      // "zip"/"text" signature must not override a specific file name.
+      const OOXML: RenderKind[] = ["docx", "pptx", "xlsx"];
+      if (sniffed !== "unknown" && sniffed !== resolved) {
+        const genericOverSpecific =
+          resolved !== "unknown" &&
+          (sniffed === "text" || (sniffed === "zip" && OOXML.includes(resolved)));
+        if (!genericOverSpecific) resolved = sniffed;
       }
+
 
 
       if (resolved === "image" || resolved === "video" || resolved === "audio") {
