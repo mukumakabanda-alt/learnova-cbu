@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as StudyRouteImport } from './routes/study'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as OfflineRouteImport } from './routes/offline'
-import { Route as DevDocTestRouteImport } from './routes/dev-doc-test'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as AuthRouteImport } from './routes/auth'
@@ -34,11 +33,6 @@ const SearchRoute = SearchRouteImport.update({
 const OfflineRoute = OfflineRouteImport.update({
   id: '/offline',
   path: '/offline',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DevDocTestRoute = DevDocTestRouteImport.update({
-  id: '/dev-doc-test',
-  path: '/dev-doc-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -83,7 +77,6 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
-  '/dev-doc-test': typeof DevDocTestRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
@@ -96,7 +89,6 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
-  '/dev-doc-test': typeof DevDocTestRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
@@ -110,7 +102,6 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/browse': typeof BrowseRoute
   '/dashboard': typeof DashboardRoute
-  '/dev-doc-test': typeof DevDocTestRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
   '/study': typeof StudyRouteWithChildren
@@ -125,7 +116,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
-    | '/dev-doc-test'
     | '/offline'
     | '/search'
     | '/study'
@@ -138,7 +128,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
-    | '/dev-doc-test'
     | '/offline'
     | '/search'
     | '/study'
@@ -151,7 +140,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/browse'
     | '/dashboard'
-    | '/dev-doc-test'
     | '/offline'
     | '/search'
     | '/study'
@@ -165,7 +153,6 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   BrowseRoute: typeof BrowseRoute
   DashboardRoute: typeof DashboardRoute
-  DevDocTestRoute: typeof DevDocTestRoute
   OfflineRoute: typeof OfflineRoute
   SearchRoute: typeof SearchRoute
   StudyRoute: typeof StudyRouteWithChildren
@@ -193,13 +180,6 @@ declare module '@tanstack/react-router' {
       path: '/offline'
       fullPath: '/offline'
       preLoaderRoute: typeof OfflineRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dev-doc-test': {
-      id: '/dev-doc-test'
-      path: '/dev-doc-test'
-      fullPath: '/dev-doc-test'
-      preLoaderRoute: typeof DevDocTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -270,7 +250,6 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   BrowseRoute: BrowseRoute,
   DashboardRoute: DashboardRoute,
-  DevDocTestRoute: DevDocTestRoute,
   OfflineRoute: OfflineRoute,
   SearchRoute: SearchRoute,
   StudyRoute: StudyRouteWithChildren,
