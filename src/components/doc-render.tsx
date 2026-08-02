@@ -780,10 +780,10 @@ export function BlobRenderer({
       // Bytes win, except when sniffing was inconclusive, or when the
       // name is more specific than a generic zip/text signature.
       if (sniffed !== "unknown") {
-        const nameIsSpecific = resolved !== "unknown" && !(sniffed === "zip" && resolved === "unknown");
         if (resolved === "unknown") resolved = sniffed;
-        else if (sniffed !== resolved && !(sniffed === "text" && nameIsSpecific)) resolved = sniffed;
+        else if (sniffed !== resolved && sniffed !== "text") resolved = sniffed;
       }
+
 
       if (resolved === "image" || resolved === "video" || resolved === "audio") {
         url = URL.createObjectURL(blob);
