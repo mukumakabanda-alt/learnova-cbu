@@ -209,3 +209,121 @@
     animation: none !important;
   }
   }
+
+/* ── Learnova document viewer: real "paper" look ──
+   Documents render dark-on-white the way the original file does, so a
+   Word file looks like the Word file rather than an app screen. These
+   are intentionally fixed paper colours, not theme tokens. */
+.doc-paper {
+  background: #ffffff;
+  color: #1a1a1a;
+  border-radius: 6px;
+  padding: 2.2rem 1.6rem;
+  box-shadow: 0 10px 30px -12px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+@media (min-width: 640px) {
+  .doc-paper { padding: 3.2rem 3rem; }
+}
+
+.doc-prose {
+  font-family: "Times New Roman", Georgia, serif;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #1a1a1a;
+  word-break: break-word;
+}
+.doc-prose p { margin: 0 0 0.85em; }
+.doc-prose h1, .doc-prose h2, .doc-prose h3, .doc-prose h4, .doc-prose h5, .doc-prose h6 {
+  font-family: "Times New Roman", Georgia, serif;
+  font-weight: 700;
+  color: #111;
+  line-height: 1.25;
+  margin: 1.3em 0 0.5em;
+}
+.doc-prose h1 { font-size: 1.75rem; }
+.doc-prose h2 { font-size: 1.45rem; }
+.doc-prose h3 { font-size: 1.2rem; }
+.doc-prose h4, .doc-prose h5, .doc-prose h6 { font-size: 1.05rem; }
+.doc-prose h1.doc-title { text-align: center; font-size: 2rem; margin-top: 0; }
+.doc-prose p.doc-subtitle { text-align: center; font-style: italic; color: #444; }
+.doc-prose ul, .doc-prose ol { margin: 0 0 0.9em 1.5em; padding-left: 0.6em; }
+.doc-prose ul { list-style: disc; }
+.doc-prose ol { list-style: decimal; }
+.doc-prose li { margin: 0.25em 0; }
+.doc-prose a { color: #0645ad; text-decoration: underline; }
+.doc-prose strong { font-weight: 700; }
+.doc-prose em { font-style: italic; }
+.doc-prose blockquote {
+  margin: 1em 0; padding: 0.2em 0 0.2em 1em;
+  border-left: 3px solid #c9c9c9; color: #444; font-style: italic;
+}
+.doc-prose hr { border: 0; border-top: 1px solid #ddd; margin: 1.5em 0; }
+.doc-prose img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+.doc-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 4px;
+}
+.doc-prose pre {
+  background: #f6f6f6; color: #1a1a1a; padding: 0.9em 1em; border-radius: 6px;
+  overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+}
+.doc-prose table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+.doc-prose th, .doc-prose td { border: 1px solid #c6c6c6; padding: 0.45em 0.6em; text-align: left; vertical-align: top; }
+.doc-prose th { background: #f0f0f0; font-weight: 700; }
+
+.doc-plain {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.doc-note {
+  margin: 0 0 1.2rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: #fdf6e7;
+  border: 1px solid #eadfc2;
+  color: #6b5720;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.doc-slide {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.4rem;
+  overflow: auto;
+  padding: 1.6rem;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+}
+.doc-slide-title {
+  font-size: clamp(1.1rem, 3.4vw, 1.9rem);
+  font-weight: 700;
+  color: #14213d;
+  line-height: 1.2;
+  margin: 0 0 0.4rem;
+}
+.doc-slide-body {
+  font-size: clamp(0.75rem, 2vw, 1rem);
+  color: #1f2937;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.doc-sheet { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 0.8rem; color: #1a1a1a; }
+.doc-sheet td {
+  border: 1px solid #d8d8d8;
+  padding: 0.35rem 0.6rem;
+  white-space: nowrap;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-sheet tr:first-child td { background: #f1f1f1; font-weight: 600; }
