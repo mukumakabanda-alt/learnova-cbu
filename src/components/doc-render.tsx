@@ -716,9 +716,9 @@ export function kindForFile(fileName: string, mime?: string | null): RenderKind 
   return "unknown";
 }
 
-/** Sniffs the real type from the first bytes when name/mime aren't enough. */
+/** Sniffs the real type from the bytes when name/mime aren't enough. */
 export async function sniffKind(blob: Blob): Promise<RenderKind> {
-  const bytes = new Uint8Array(await blob.slice(0, 512).arrayBuffer());
+  const bytes = new Uint8Array(await blob.slice(0, 8192).arrayBuffer());
   const b = (n: number) => bytes[n] ?? -1;
   if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) return "pdf";
   if (b(0) === 0xff && b(1) === 0xd8) return "image";
@@ -731,13 +731,16 @@ export async function sniffKind(blob: Blob): Promise<RenderKind> {
   // OLE2 compound file → legacy Office
   if (b(0) === 0xd0 && b(1) === 0xcf && b(2) === 0x11 && b(3) === 0xe0) return "legacy-office";
   if (b(0) === 0x50 && b(1) === 0x4b) {
-    // OOXML packages announce themselves in the first entry name
+    // OOXML packages name their parts inside the archive. Entry order
+    // varies by producer (Word often writes [Content_Types].xml first),
+    // so scan a decent chunk, not just the first record.
     const head = new TextDecoder("latin1").decode(bytes);
-    if (head.includes("word/")) return "docx";
-    if (head.includes("ppt/")) return "pptx";
-    if (head.includes("xl/")) return "xlsx";
+    if (head.includes("word/document.xml") || head.includes("word/")) return "docx";
+    if (head.includes("ppt/slides/") || head.includes("ppt/")) return "pptx";
+    if (head.includes("xl/workbook.xml") || head.includes("xl/")) return "xlsx";
     return "zip";
   }
+
   // Mostly-printable? treat as text.
   let printable = 0;
   for (let i = 0; i < bytes.length; i++) {
