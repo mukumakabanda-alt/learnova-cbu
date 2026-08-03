@@ -55,8 +55,7 @@ export function decodeXml(s: string): string {
 }
 
 async function loadZip(blob: Blob) {
-  const JSZip = (await import("jszip")).default;
-  return JSZip.loadAsync(await blob.arrayBuffer());
+  return openZip(blob);
 }
 
 function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
