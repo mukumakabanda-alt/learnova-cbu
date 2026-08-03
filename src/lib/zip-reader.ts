@@ -48,6 +48,7 @@ function toBase64(bytes: Uint8Array): string {
 
 /** Minimal, tolerant central-directory ZIP parser. */
 async function parseZip(buffer: ArrayBuffer): Promise<ZipArchive> {
+  if (!(globalThis as any).DecompressionStream) throw new Error("no-decompression-stream");
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
 
@@ -150,11 +151,11 @@ async function parseZip(buffer: ArrayBuffer): Promise<ZipArchive> {
 export async function openZip(blob: Blob): Promise<ZipArchive> {
   const buffer = await blob.arrayBuffer();
   try {
+    return await parseZip(buffer);
+  } catch (err) {
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(buffer, { checkCRC32: false } as any);
-    if (Object.keys(zip.files).length) return zip as unknown as ZipArchive;
-    throw new Error("empty");
-  } catch {
-    return parseZip(buffer);
+    if (!Object.keys(zip.files).length) throw err;
+    return zip as unknown as ZipArchive;
   }
 }
