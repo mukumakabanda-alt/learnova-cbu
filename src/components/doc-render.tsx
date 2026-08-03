@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, FileWarning, FileArchive, ChevronRight, ArrowLeft, File as FileIcon } from "lucide-react";
 import { loadPdfjs } from "@/lib/pdfjs";
+import { openZip } from "@/lib/zip-reader";
 
 /* ── shared bits ── */
 
@@ -55,8 +56,7 @@ export function decodeXml(s: string): string {
 }
 
 async function loadZip(blob: Blob) {
-  const JSZip = (await import("jszip")).default;
-  return JSZip.loadAsync(await blob.arrayBuffer());
+  return openZip(blob);
 }
 
 function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
@@ -618,10 +618,12 @@ export function ZipRenderer({ blob, fileName }: { blob: Blob; fileName: string }
   const { data, error } = useAsync(async () => {
     const zip = await loadZip(blob);
     const entries: ZipEntry[] = [];
-    zip.forEach((path, file) => {
-      if (path.startsWith("__MACOSX/")) return;
-      entries.push({ name: path, size: (file as any)._data?.uncompressedSize ?? 0, dir: file.dir });
-    });
+    for (const [path, file] of Object.entries(zip.files)) {
+      if (path.startsWith("__MACOSX/")) continue;
+      const dir = (file as any).dir ?? path.endsWith("/");
+      if (dir) continue;
+      entries.push({ name: path, size: (file as any)._data?.uncompressedSize ?? 0, dir: false });
+    }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     return { zip, entries };
   }, [blob]);
@@ -660,7 +662,8 @@ export function ZipRenderer({ blob, fileName }: { blob: Blob; fileName: string }
                 onClick={async () => {
                   const file = data.zip.file(entry.name);
                   if (!file) return;
-                  const inner = await file.async("blob");
+                  const bytes = await (file as any).async("uint8array");
+                  const inner = new Blob([bytes]);
                   setOpenEntry({ name: entry.name, blob: inner });
                 }}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted"

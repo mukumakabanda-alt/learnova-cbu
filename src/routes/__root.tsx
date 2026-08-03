@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "../hooks/use-auth";
 import { BrandIntro } from "../components/BrandIntro";
 import { Toaster } from "../components/ui/sonner";
+import { registerOfflineViewerSupport } from "../lib/offline-assets";
 
 function NotFoundComponent() {
   return (
@@ -124,6 +125,10 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    registerOfflineViewerSupport();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
