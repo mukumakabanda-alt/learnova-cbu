@@ -17,7 +17,7 @@ import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as StudyIdRouteImport } from './routes/study.$id'
+import { Route as StudyIdRouteImport } from './routes/study_.$id'
 import { Route as CoursesCodeRouteImport } from './routes/courses.$code'
 
 const StudyRoute = StudyRouteImport.update({
@@ -61,9 +61,9 @@ const IndexRoute = IndexRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const StudyIdRoute = StudyIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => StudyRoute,
+  id: '/study_/$id',
+  path: '/study/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CoursesCodeRoute = CoursesCodeRouteImport.update({
   id: '/courses/$code',
@@ -79,7 +79,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
-  '/study': typeof StudyRouteWithChildren
+  '/study': typeof StudyRoute
   '/courses/$code': typeof CoursesCodeRoute
   '/study/$id': typeof StudyIdRoute
 }
@@ -91,7 +91,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
-  '/study': typeof StudyRouteWithChildren
+  '/study': typeof StudyRoute
   '/courses/$code': typeof CoursesCodeRoute
   '/study/$id': typeof StudyIdRoute
 }
@@ -104,9 +104,9 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/offline': typeof OfflineRoute
   '/search': typeof SearchRoute
-  '/study': typeof StudyRouteWithChildren
+  '/study': typeof StudyRoute
   '/courses/$code': typeof CoursesCodeRoute
-  '/study/$id': typeof StudyIdRoute
+  '/study_/$id': typeof StudyIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -144,7 +144,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/study'
     | '/courses/$code'
-    | '/study/$id'
+    | '/study_/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -155,8 +155,9 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   OfflineRoute: typeof OfflineRoute
   SearchRoute: typeof SearchRoute
-  StudyRoute: typeof StudyRouteWithChildren
+  StudyRoute: typeof StudyRoute
   CoursesCodeRoute: typeof CoursesCodeRoute
+  StudyIdRoute: typeof StudyIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -217,12 +218,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/study/$id': {
-      id: '/study/$id'
-      path: '/$id'
+    '/study_/$id': {
+      id: '/study_/$id'
+      path: '/study/$id'
       fullPath: '/study/$id'
       preLoaderRoute: typeof StudyIdRouteImport
-      parentRoute: typeof StudyRoute
+      parentRoute: typeof rootRouteImport
     }
     '/courses/$code': {
       id: '/courses/$code'
@@ -234,16 +235,6 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface StudyRouteChildren {
-  StudyIdRoute: typeof StudyIdRoute
-}
-
-const StudyRouteChildren: StudyRouteChildren = {
-  StudyIdRoute: StudyIdRoute,
-}
-
-const StudyRouteWithChildren = StudyRoute._addFileChildren(StudyRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
@@ -252,8 +243,9 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   OfflineRoute: OfflineRoute,
   SearchRoute: SearchRoute,
-  StudyRoute: StudyRouteWithChildren,
+  StudyRoute: StudyRoute,
   CoursesCodeRoute: CoursesCodeRoute,
+  StudyIdRoute: StudyIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

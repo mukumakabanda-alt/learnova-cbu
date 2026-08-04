@@ -6,7 +6,7 @@ import { StudyPanel } from "@/components/StudyPanel";
 import { useMaterial } from "@/lib/queries";
 import { getOfflineMaterial, useOnlineStatus, type OfflineBundle } from "@/lib/offline";
 
-export const Route = createFileRoute("/study/$id")({
+export const Route = createFileRoute("/study_/$id")({
   component: StudyDocument,
 });
 
