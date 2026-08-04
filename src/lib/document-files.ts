@@ -245,11 +245,16 @@ export function downloadBlob(blob: Blob, filename: string): void {
     link.href = blobUrl;
     link.download = filename;
     link.rel = "noopener";
+    // Older iOS Safari ignores `download` for blob URLs. Opening that same
+    // local blob in a new tab still gives the student the native Share / Save
+    // to Files sheet instead of making the button appear to do nothing.
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) link.target = "_blank";
     document.body.appendChild(link);
     link.click();
     link.remove();
   } finally {
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+    // Mobile browsers may not consume the blob immediately after click.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
   }
 }
 
