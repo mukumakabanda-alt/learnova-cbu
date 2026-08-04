@@ -7,6 +7,16 @@ import { useMaterial } from "@/lib/queries";
 import { getOfflineMaterial, useOnlineStatus, type OfflineBundle } from "@/lib/offline";
 
 export const Route = createFileRoute("/study_/$id")({
+  head: () => ({
+    meta: [
+      { title: "Study Material — Learnova" },
+      { name: "description", content: "Open a Learnova study document, summary, flashcards and quiz." },
+      { property: "og:title", content: "Study Material — Learnova" },
+      { property: "og:description", content: "Open a Learnova study document, summary, flashcards and quiz." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
   component: StudyDocument,
 });
 
@@ -73,6 +83,7 @@ function StudyDocument() {
 
   const effectiveMaterial = material ?? offline?.material ?? null;
   const isOfflineCopy = !material && !!offline;
+  const offlineSavedAt = isOfflineCopy ? offline?.savedAt : null;
   // While we need to check offline storage, resolve as soon as that check
   // finishes — don't keep waiting on `isLoading`, since it can legitimately
   // stay true indefinitely for a paused, offline network query.
@@ -115,15 +126,15 @@ function StudyDocument() {
                 {statusLabel(effectiveMaterial.status)}
               </span>
             </div>
-            {isOfflineCopy && (
+            {offlineSavedAt && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                <WifiOff className="h-3.5 w-3.5" /> Viewing the offline copy saved on {new Date(offline!.savedAt).toLocaleDateString()}
+                <WifiOff className="h-3.5 w-3.5" /> Viewing the offline copy saved on {new Date(offlineSavedAt).toLocaleDateString()}
               </p>
             )}
             <div className="mt-6">
               <StudyPanel
                 material={effectiveMaterial}
-                offlineBundle={isOfflineCopy ? { flashcards: offline!.flashcards, quiz: offline!.quiz } : null}
+                offlineBundle={isOfflineCopy && offline ? { flashcards: offline.flashcards, quiz: offline.quiz } : null}
               />
             </div>
           </>
