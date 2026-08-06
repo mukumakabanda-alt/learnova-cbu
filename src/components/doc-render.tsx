@@ -218,7 +218,9 @@ export function DocxRenderer({ blob }: { blob: Blob }) {
         ),
       },
     );
-    return (result.value as string) || "<p><em>(This document has no visible content.)</em></p>";
+    // Untrusted upload: never render converted HTML without sanitizing it.
+    const clean = sanitizeDocHtml((result.value as string) || "");
+    return clean || "<p><em>(This document has no visible content.)</em></p>";
   }, [blob]);
 
   if (error) return <RenderError text="Couldn't open this Word document." detail={error} />;

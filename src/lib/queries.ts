@@ -365,8 +365,8 @@ export function useRelatedMaterials(
 export function useIncrementDownload() {
   return useMutation({
     mutationFn: async (materialId: string) => {
-      const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
-      if (error) throw error;
+      // Counter bump is best-effort: signed-out visitors can't call the RPC.
+      await supabase.rpc("increment_download_count", { p_material_id: materialId });
     },
   });
 }
