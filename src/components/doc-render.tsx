@@ -509,7 +509,7 @@ function markdownToHtml(md: string): string {
 export function TextRenderer({ text, fileName }: { text: string; fileName: string }) {
   const isMarkdown = /\.(md|markdown)$/i.test(fileName);
   const isCsv = /\.csv$/i.test(fileName);
-  const html = useMemo(() => (isMarkdown ? markdownToHtml(text) : ""), [isMarkdown, text]);
+  const html = useMemo(() => (isMarkdown ? sanitizeDocHtml(markdownToHtml(text)) : ""), [isMarkdown, text]);
 
   if (isCsv) {
     const rows = text
