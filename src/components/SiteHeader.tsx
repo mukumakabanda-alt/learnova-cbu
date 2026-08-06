@@ -24,7 +24,7 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         <Logo />
         <div className="flex items-center gap-2">
-          <Link to="/search" aria-label="Search" className="grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <Link to="/search" search={{ q: "" }} aria-label="Search" className="grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
             <Search className="h-4 w-4" />
           </Link>
           {user ? (
