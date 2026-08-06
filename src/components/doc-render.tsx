@@ -11,8 +11,22 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, FileWarning, FileArchive, ChevronRight, ArrowLeft, File as FileIcon } from "lucide-react";
 import { loadPdfjs } from "@/lib/pdfjs";
 import { openZip } from "@/lib/zip-reader";
+import DOMPurify from "dompurify";
 
 /* ── shared bits ── */
+
+// Documents are user uploads, so any HTML derived from them is untrusted.
+// Allow-list safe markup only and block javascript:/data: navigation.
+export function sanitizeDocHtml(html: string): string {
+  if (typeof window === "undefined") return "";
+  return DOMPurify.sanitize(html, {
+    FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "link", "base", "meta"],
+    FORBID_ATTR: ["srcset", "formaction", "ping"],
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp|svg\+xml);base64,|#|\/)/i,
+  });
+}
+
 
 export function Spinner({ label }: { label?: string }) {
   return (
@@ -218,7 +232,9 @@ export function DocxRenderer({ blob }: { blob: Blob }) {
         ),
       },
     );
-    return (result.value as string) || "<p><em>(This document has no visible content.)</em></p>";
+    // Untrusted upload: never render converted HTML without sanitizing it.
+    const clean = sanitizeDocHtml((result.value as string) || "");
+    return clean || "<p><em>(This document has no visible content.)</em></p>";
   }, [blob]);
 
   if (error) return <RenderError text="Couldn't open this Word document." detail={error} />;
@@ -493,7 +509,7 @@ function markdownToHtml(md: string): string {
 export function TextRenderer({ text, fileName }: { text: string; fileName: string }) {
   const isMarkdown = /\.(md|markdown)$/i.test(fileName);
   const isCsv = /\.csv$/i.test(fileName);
-  const html = useMemo(() => (isMarkdown ? markdownToHtml(text) : ""), [isMarkdown, text]);
+  const html = useMemo(() => (isMarkdown ? sanitizeDocHtml(markdownToHtml(text)) : ""), [isMarkdown, text]);
 
   if (isCsv) {
     const rows = text
