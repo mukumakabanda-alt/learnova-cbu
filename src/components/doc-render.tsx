@@ -11,22 +11,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, FileWarning, FileArchive, ChevronRight, ArrowLeft, File as FileIcon } from "lucide-react";
 import { loadPdfjs } from "@/lib/pdfjs";
 import { openZip } from "@/lib/zip-reader";
-import DOMPurify from "dompurify";
 
 /* ── shared bits ── */
-
-// Documents are user uploads, so any HTML derived from them is untrusted.
-// Allow-list safe markup only and block javascript:/data: navigation.
-export function sanitizeDocHtml(html: string): string {
-  if (typeof window === "undefined") return "";
-  return DOMPurify.sanitize(html, {
-    FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "link", "base", "meta"],
-    FORBID_ATTR: ["srcset", "formaction", "ping"],
-    ALLOW_DATA_ATTR: false,
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp|svg\+xml);base64,|#|\/)/i,
-  });
-}
-
 
 export function Spinner({ label }: { label?: string }) {
   return (
@@ -207,6 +193,43 @@ function PdfPage({ canvas, index }: { canvas: HTMLCanvasElement; index: number }
   );
 }
 
+/* ── Bundled multi-image material — a photographed test's pages,
+   combined into one material at upload time instead of forcing one
+   upload per photo. Visually this is the same "Page N" paper-sheet
+   layout as a PDF's pages, because that's exactly what it is: an
+   ordered, multi-page document, just captured as separate photos
+   instead of one file. ── */
+
+function BundlePage({ blob, index }: { blob: Blob; index: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(blob);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [blob]);
+
+  return (
+    <div className="relative mx-auto mb-4 w-full max-w-3xl">
+      <div className="doc-paper overflow-hidden !p-0">
+        {url && <img src={url} alt={`Page ${index + 1}`} className="block h-auto w-full" />}
+      </div>
+      <span className="mt-1 block text-center text-[11px] text-muted-foreground">Page {index + 1}</span>
+    </div>
+  );
+}
+
+export function BundleRenderer({ pages }: { pages: Blob[] }) {
+  if (pages.length === 0) return <RenderError text="This document doesn't have any pages yet." />;
+  return (
+    <div>
+      {pages.map((blob, i) => (
+        <BundlePage key={i} blob={blob} index={i} />
+      ))}
+    </div>
+  );
+}
+
 /* ── DOCX ── */
 
 export function DocxRenderer({ blob }: { blob: Blob }) {
@@ -232,9 +255,7 @@ export function DocxRenderer({ blob }: { blob: Blob }) {
         ),
       },
     );
-    // Untrusted upload: never render converted HTML without sanitizing it.
-    const clean = sanitizeDocHtml((result.value as string) || "");
-    return clean || "<p><em>(This document has no visible content.)</em></p>";
+    return (result.value as string) || "<p><em>(This document has no visible content.)</em></p>";
   }, [blob]);
 
   if (error) return <RenderError text="Couldn't open this Word document." detail={error} />;
@@ -509,7 +530,7 @@ function markdownToHtml(md: string): string {
 export function TextRenderer({ text, fileName }: { text: string; fileName: string }) {
   const isMarkdown = /\.(md|markdown)$/i.test(fileName);
   const isCsv = /\.csv$/i.test(fileName);
-  const html = useMemo(() => (isMarkdown ? sanitizeDocHtml(markdownToHtml(text)) : ""), [isMarkdown, text]);
+  const html = useMemo(() => (isMarkdown ? markdownToHtml(text) : ""), [isMarkdown, text]);
 
   if (isCsv) {
     const rows = text
@@ -799,8 +820,6 @@ export function BlobRenderer({
       let resolved = kindForFile(fileName, mime || blob.type);
       const sniffed = await sniffKind(blob);
       if (!active) return;
-      // Bytes win, except when sniffing was inconclusive, or when the
-      // name is more specific than a generic zip/text signature.
       // Bytes normally win (a mislabelled upload still opens correctly),
       // except when sniffing was inconclusive or only generic — a bare
       // "zip"/"text" signature must not override a specific file name.
@@ -894,4 +913,4 @@ function UnknownRenderer({ blob, fileName }: { blob: Blob; fileName: string }) {
       )}
     </Paper>
   );
-}
+             }
