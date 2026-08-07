@@ -266,4 +266,38 @@ export async function forceDownload(filePath: string, fallbackTitle: string): Pr
   const blob = await response.blob();
   downloadBlob(blob, filename);
   return blob;
-    }
+}
+
+/**
+ * Downloads every page of a bundled multi-image material as a single
+ * .zip (using JSZip, already a dependency for the upload-side extraction
+ * pipeline). A bundle has no single "original file" to hand back the way
+ * `forceDownload` does for an ordinary material, so this zips the pages
+ * client-side instead of trying to reconstruct one.
+ */
+export async function forceDownloadBundleAsZip(
+  filePaths: string[],
+  fallbackTitle: string,
+): Promise<Blob> {
+  if (filePaths.length === 0) throw new Error("No pages to download.");
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+
+  const pages = await Promise.all(
+    filePaths.map(async (path) => {
+      const url = await getViewUrl(path);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Couldn't fetch a page (status ${response.status}).`);
+      return { name: originalFileName(path, fallbackTitle), blob: await response.blob() };
+    }),
+  );
+
+  pages.forEach(({ name, blob }, i) => {
+    zip.file(`${String(i + 1).padStart(2, "0")}-${name}`, blob);
+  });
+
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  const zipName = `${fallbackTitle.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 80) || "document"}.zip`;
+  downloadBlob(zipBlob, zipName);
+  return zipBlob;
+}
