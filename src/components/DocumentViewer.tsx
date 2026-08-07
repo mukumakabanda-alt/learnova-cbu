@@ -16,9 +16,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getViewUrl, forceDownload, downloadBlob, originalFileName,
+  getViewUrl, forceDownload, forceDownloadBundleAsZip, downloadBlob, originalFileName,
 } from "@/lib/document-files";
-import { BlobRenderer, RenderError } from "@/components/doc-render";
+import { BlobRenderer, BundleRenderer, RenderError } from "@/components/doc-render";
 import {
   useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse,
 } from "@/lib/queries";
@@ -112,6 +112,86 @@ function useDocumentBlob(materialId: string, filePath: string | null, enabled: b
   return state;
 }
 
+type BundleLoadState = {
+  pages: Blob[];
+  fromOffline: boolean;
+  error: string | null;
+};
+
+/**
+ * Same online → offline-fallback strategy as useDocumentBlob above, for a
+ * bundled multi-image material's full set of pages (cover + extras)
+ * instead of one file. Cache is only ever treated as usable when EVERY
+ * page came down for it — a bundle showing 2 of 3 pages with nothing
+ * telling the student a page is missing is worse than clearly needing
+ * the network.
+ */
+function useDocumentBundleBlobs(
+  materialId: string,
+  filePath: string | null,
+  extraFilePaths: string[],
+  enabled: boolean,
+): BundleLoadState {
+  const [state, setState] = useState<BundleLoadState>({ pages: [], fromOffline: false, error: null });
+  const pathsKey = [filePath, ...extraFilePaths].join("\u0001");
+
+  useEffect(() => {
+    if (!enabled || !filePath) return;
+    let active = true;
+    setState({ pages: [], fromOffline: false, error: null });
+
+    const allPaths = [filePath, ...extraFilePaths];
+
+    async function fromCache(): Promise<boolean> {
+      const bundle = await getOfflineMaterial(materialId);
+      if (!active || !bundle?.fileBlob) return false;
+      const pages = [bundle.fileBlob, ...(bundle.extraFileBlobs ?? [])];
+      if (pages.length < allPaths.length) return false;
+      setState({ pages, fromOffline: true, error: null });
+      touchLastOpened(materialId);
+      return true;
+    }
+
+    (async () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const used = await fromCache();
+        if (!used && active) {
+          setState({ pages: [], fromOffline: false, error: "You're offline and this document hasn't been saved to your device yet." });
+        }
+        return;
+      }
+
+      try {
+        const blobs = await Promise.all(
+          allPaths.map(async (p) => {
+            const signed = await getViewUrl(p);
+            const response = await fetch(signed);
+            if (!response.ok) throw new Error(`Couldn't fetch a page (status ${response.status}).`);
+            return response.blob();
+          }),
+        );
+        if (!active) return;
+        touchLastOpened(materialId);
+        setState({ pages: blobs, fromOffline: false, error: null });
+      } catch (e) {
+        const used = await fromCache();
+        if (!used && active) {
+          setState({ pages: [], fromOffline: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+    // extraFilePaths is folded into pathsKey below so the effect doesn't
+    // re-run every render over a new-but-equal array reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialId, pathsKey, enabled]);
+
+  return state;
+}
+
 /* ───────────────────────── modal viewer ───────────────────────── */
 
 export function DocumentViewer({
@@ -137,7 +217,13 @@ export function DocumentViewer({
   const [downloaded, setDownloaded] = useState(false);
 
   const isSaved = !!saved?.some((s) => s.material_id === materialId);
-  const { blob, mime, fromOffline, error } = useDocumentBlob(materialId, filePath, open);
+  const extraFilePaths = material?.extra_file_paths ?? [];
+  const isBundle = extraFilePaths.length > 0;
+  const single = useDocumentBlob(materialId, filePath, open && !isBundle);
+  const bundle = useDocumentBundleBlobs(materialId, filePath, extraFilePaths, open && isBundle);
+  const fromOffline = isBundle ? bundle.fromOffline : single.fromOffline;
+  const error = isBundle ? bundle.error : single.error;
+  const ready = isBundle ? bundle.pages.length > 0 : !!single.blob;
 
   useEffect(() => {
     if (!open) return;
@@ -162,18 +248,31 @@ export function DocumentViewer({
     if (!filePath) return;
     setDownloading(true);
     try {
-      let file: Blob;
-      if (blob) {
-        downloadBlob(blob, fileName);
-        file = blob;
+      if (isBundle) {
+        await forceDownloadBundleAsZip([filePath, ...extraFilePaths], title);
+        incrementDownload.mutate(materialId);
+        setDownloaded(true);
+        if (material) {
+          // A bundle fetches and caches page-by-page inside this call
+          // itself (it already knows to walk extra_file_paths) — there's
+          // no single pre-fetched blob to hand it the way there is below.
+          await saveMaterialOfflineFromDownload(material);
+          toast.success("Downloaded — also saved for offline viewing.");
+        }
       } else {
-        file = await forceDownload(filePath, title);
-      }
-      incrementDownload.mutate(materialId);
-      setDownloaded(true);
-      if (material) {
-        await saveMaterialOfflineFromDownload(material, { blob: file, mime: file.type });
-        toast.success("Downloaded — also saved for offline viewing.");
+        let file: Blob;
+        if (single.blob) {
+          downloadBlob(single.blob, fileName);
+          file = single.blob;
+        } else {
+          file = await forceDownload(filePath, title);
+        }
+        incrementDownload.mutate(materialId);
+        setDownloaded(true);
+        if (material) {
+          await saveMaterialOfflineFromDownload(material, { blob: file, mime: file.type });
+          toast.success("Downloaded — also saved for offline viewing.");
+        }
       }
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
@@ -253,12 +352,14 @@ export function DocumentViewer({
             <RenderError text="No file is attached to this material." />
           ) : error ? (
             <RenderError text="Couldn't open this document right now." detail={error} />
-          ) : !blob ? (
+          ) : !ready ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
+          ) : isBundle ? (
+            <BundleRenderer pages={bundle.pages} />
           ) : (
-            <BlobRenderer blob={blob} fileName={fileName} mime={mime} />
+            <BlobRenderer blob={single.blob!} fileName={fileName} mime={single.mime} />
           )}
         </div>
       </motion.div>
@@ -273,12 +374,19 @@ export function InlineDocumentPreview({
   materialId,
   filePath,
   title,
+  extraFilePaths = [],
 }: {
   materialId: string;
   filePath: string | null;
   title: string;
+  extraFilePaths?: string[];
 }) {
-  const { blob, mime, fromOffline, error } = useDocumentBlob(materialId, filePath, true);
+  const isBundle = extraFilePaths.length > 0;
+  const single = useDocumentBlob(materialId, filePath, !isBundle);
+  const bundle = useDocumentBundleBlobs(materialId, filePath, extraFilePaths, isBundle);
+  const fromOffline = isBundle ? bundle.fromOffline : single.fromOffline;
+  const error = isBundle ? bundle.error : single.error;
+  const ready = isBundle ? bundle.pages.length > 0 : !!single.blob;
 
   if (!filePath) {
     return (
@@ -303,14 +411,16 @@ export function InlineDocumentPreview({
             <FileWarning className="h-6 w-6 text-copper" />
             <p className="max-w-xs text-sm text-muted-foreground">{error}</p>
           </div>
-        ) : !blob ? (
+        ) : !ready ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
+        ) : isBundle ? (
+          <BundleRenderer pages={bundle.pages} />
         ) : (
-          <BlobRenderer blob={blob} fileName={fileName} mime={mime} />
+          <BlobRenderer blob={single.blob!} fileName={fileName} mime={single.mime} />
         )}
       </div>
     </div>
   );
-}
+      }
