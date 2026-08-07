@@ -365,8 +365,8 @@ export function useRelatedMaterials(
 export function useIncrementDownload() {
   return useMutation({
     mutationFn: async (materialId: string) => {
-      // Counter bump is best-effort: signed-out visitors can't call the RPC.
-      await supabase.rpc("increment_download_count", { p_material_id: materialId });
+      const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
+      if (error) throw error;
     },
   });
 }
@@ -436,13 +436,58 @@ export function usePopularCourses(limit = 6) {
   return useQuery({
     queryKey: ["popular-courses", limit],
     queryFn: async (): Promise<CourseWithProgramme[]> => {
-      const { data, error } = await supabase
-        .from("courses")
-        .select("*, programmes(name, school)")
-        .order("code")
-        .limit(limit);
-      if (error) throw error;
-      return (data ?? []) as CourseWithProgramme[];
+      // "Popular" used to just mean "first N course codes alphabetically" —
+      // every course tied for #1, forever, regardless of anyone using it.
+      // This ranks by real engagement (downloads + likes across a course's
+      // materials) instead.
+      const { data: materialRows, error: materialError } = await supabase
+        .from("materials")
+        .select("course_code, download_count, likes_count")
+        .in("status", ["ready", "processing", "catalog_only"])
+        .not("course_code", "is", null);
+      if (materialError) throw materialError;
+
+      const engagement = new Map<string, number>();
+      for (const m of materialRows ?? []) {
+        if (!m.course_code) continue;
+        const score = (m.download_count ?? 0) + (m.likes_count ?? 0);
+        engagement.set(m.course_code, (engagement.get(m.course_code) ?? 0) + score);
+      }
+
+      const rankedCodes = [...engagement.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([code]) => code)
+        .slice(0, limit);
+
+      let courses: CourseWithProgramme[] = [];
+      if (rankedCodes.length > 0) {
+        const { data, error } = await supabase
+          .from("courses")
+          .select("*, programmes(name, school)")
+          .in("code", rankedCodes);
+        if (error) throw error;
+        const byCode = new Map((data ?? []).map((c) => [c.code, c as CourseWithProgramme]));
+        courses = rankedCodes.map((code) => byCode.get(code)).filter((c): c is CourseWithProgramme => !!c);
+      }
+
+      // Not enough real engagement yet (fresh deployment, quiet term) —
+      // top up with other courses so the section is never just empty.
+      if (courses.length < limit) {
+        const exclude = new Set(courses.map((c) => c.code));
+        const { data, error } = await supabase
+          .from("courses")
+          .select("*, programmes(name, school)")
+          .order("code")
+          .limit(limit + exclude.size);
+        if (error) throw error;
+        for (const c of (data ?? []) as CourseWithProgramme[]) {
+          if (courses.length >= limit) break;
+          if (exclude.has(c.code)) continue;
+          courses.push(c);
+        }
+      }
+
+      return courses;
     },
   });
 }
