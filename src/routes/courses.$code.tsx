@@ -3,11 +3,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { useCourse, useMaterialsForCourse, useToggleSaved, useSavedMaterials, useIncrementDownload } from "@/lib/queries";
 import { DocumentUpload } from "@/components/DocumentUpload";
-import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Bookmark, Download, Eye, FileText, Check } from "lucide-react";
-import { forceDownload } from "@/lib/document-files";
+import { ArrowLeft, Bookmark, Download, FileText, Check } from "lucide-react";
+import { forceDownload, forceDownloadBundleAsZip } from "@/lib/document-files";
 import { saveMaterialOfflineFromDownload, useOfflineStatus } from "@/lib/offline";
 import { toast } from "sonner";
 import type { Database } from "@/integrations/supabase/types";
@@ -44,14 +43,12 @@ function MaterialRowCard({
   isSaved,
   isPending,
   onToggleSaved,
-  onPreview,
 }: {
   m: MaterialRow;
   course: { title: string; code: string; programme_code: string };
   isSaved: boolean;
   isPending: boolean;
   onToggleSaved: () => void;
-  onPreview: () => void;
 }) {
   const { downloaded } = useOfflineStatus(m.id);
   const incrementDownload = useIncrementDownload();
@@ -61,9 +58,19 @@ function MaterialRowCard({
     if (!m.file_path) return;
     setDownloading(true);
     try {
-      const blob = await forceDownload(m.file_path, m.title);
+      const extraFilePaths = m.extra_file_paths ?? [];
+      if (extraFilePaths.length > 0) {
+        await forceDownloadBundleAsZip([m.file_path, ...extraFilePaths], m.title);
+        // saveMaterialOfflineFromDownload re-fetches every page itself
+        // for a bundle (it already knows to walk extra_file_paths) —
+        // there's no single pre-fetched blob to hand it the way there
+        // is for an ordinary material below.
+        await saveMaterialOfflineFromDownload({ ...m, courses: course });
+      } else {
+        const blob = await forceDownload(m.file_path, m.title);
+        await saveMaterialOfflineFromDownload({ ...m, courses: course }, { blob, mime: blob.type });
+      }
       incrementDownload.mutate(m.id);
-      await saveMaterialOfflineFromDownload({ ...m, courses: course }, { blob, mime: blob.type });
       toast.success("Downloaded — also in your Library, opens with zero signal.");
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
@@ -74,19 +81,27 @@ function MaterialRowCard({
 
   return (
     <div className="group card-hover flex items-center gap-3 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft">
-      <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></Link>
-      <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>
-          {m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}
-          {downloaded && (
-            <span className="flex items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
-              <Check className="h-2.5 w-2.5" /> Downloaded
-            </span>
-          )}
+      {/* One tap target for the whole card — this is the only way in.
+          There used to be a separate eye-icon button that opened a raw
+          preview instead of this same destination; tapping the card
+          itself did something different, which is exactly the split
+          students were tripping over. Bookmark and Download are the only
+          things that stay as their own controls. */}
+      <Link to="/study/$id" params={{ id: m.id }} className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">{m.type}</span>
+            {m.pages && <span className="text-[11px] text-muted-foreground">{m.pages} pages</span>}
+            {downloaded && (
+              <span className="flex items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
+                <Check className="h-2.5 w-2.5" /> Downloaded
+              </span>
+            )}
+          </div>
+          <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
+          <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
         </div>
-        <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
-        <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
       </Link>
       <button
         onClick={onToggleSaved}
@@ -96,15 +111,6 @@ function MaterialRowCard({
       >
         <Bookmark className="h-4 w-4" />
       </button>
-      {m.file_path && (
-        <button
-          onClick={onPreview}
-          aria-label={`Preview ${m.title}`}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
-        >
-          <Eye className="h-4 w-4" />
-        </button>
-      )}
       {m.file_path && (
         <button
           onClick={handleDownload}
@@ -134,11 +140,6 @@ function CoursePage() {
   // mutation twice — without disabling every OTHER bookmark button on the
   // page while one save is in flight.
   const [pendingSaveIds, setPendingSaveIds] = useState<Set<string>>(new Set());
-
-  // Lets the row's own "View" button open the document right here,
-  // instead of the only option being to navigate to /study/$id first —
-  // same fix as the Study catalogue list.
-  const [viewerMaterial, setViewerMaterial] = useState<MaterialRow | null>(null);
 
   function handleToggleSaved(materialId: string, nextSaved: boolean) {
     if (pendingSaveIds.has(materialId)) return;
@@ -208,7 +209,6 @@ function CoursePage() {
                 isSaved={savedIds.has(m.id)}
                 isPending={pendingSaveIds.has(m.id)}
                 onToggleSaved={() => handleToggleSaved(m.id, !savedIds.has(m.id))}
-                onPreview={() => setViewerMaterial(m)}
               />
             ))}
           </div>
@@ -244,17 +244,8 @@ function CoursePage() {
         </aside>
       </div>
 
-      <DocumentViewer
-        open={!!viewerMaterial}
-        onClose={() => setViewerMaterial(null)}
-        materialId={viewerMaterial?.id ?? ""}
-        filePath={viewerMaterial?.file_path ?? null}
-        title={viewerMaterial?.title ?? ""}
-        material={viewerMaterial ? { ...viewerMaterial, courses: courseInfo } : null}
-      />
-
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-        }
+}
