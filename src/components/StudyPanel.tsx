@@ -13,7 +13,7 @@ import {
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { saveMaterialOffline, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
-import { forceDownload, fetchFileForOffline, originalFileName } from "@/lib/document-files";
+import { forceDownload, forceDownloadBundleAsZip, fetchFileForOffline, originalFileName } from "@/lib/document-files";
 import { extractDocumentText } from "@/lib/document-text";
 import { DocumentViewer, InlineDocumentPreview } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
@@ -142,15 +142,41 @@ export function StudyPanel({
     if (!material.file_path) return;
     setDownloading(true);
     try {
-      const blob = await forceDownload(material.file_path, material.title);
-      incrementDownload.mutate(material.id);
-      await saveMaterialOffline({
-        material,
-        flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
-        quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
-        fileBlob: blob,
-        fileMime: blob.type,
-      });
+      const extraFilePaths = material.extra_file_paths ?? [];
+      const isBundle = extraFilePaths.length > 0;
+
+      if (isBundle) {
+        await forceDownloadBundleAsZip([material.file_path, ...extraFilePaths], material.title);
+        // The zip is what the student keeps; caching each page
+        // separately here too is what lets this same study page keep
+        // working with zero signal afterwards, same promise as any
+        // other Download.
+        const [cover, ...extras] = await Promise.all(
+          [material.file_path, ...extraFilePaths].map((p) => fetchFileForOffline(p)),
+        );
+        if (!cover) throw new Error("Couldn't fetch the cover page.");
+        const extrasComplete = extras.every((e) => e !== null);
+        incrementDownload.mutate(material.id);
+        await saveMaterialOffline({
+          material,
+          flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
+          quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
+          fileBlob: cover.blob,
+          fileMime: cover.mime,
+          extraFileBlobs: extrasComplete ? extras.map((e) => e!.blob) : undefined,
+          extraFileMimes: extrasComplete ? extras.map((e) => e!.mime) : undefined,
+        });
+      } else {
+        const blob = await forceDownload(material.file_path, material.title);
+        incrementDownload.mutate(material.id);
+        await saveMaterialOffline({
+          material,
+          flashcards: offlineBundle?.flashcards ?? flashcardsForOffline ?? [],
+          quiz: offlineBundle?.quiz ?? quizForOffline ?? [],
+          fileBlob: blob,
+          fileMime: blob.type,
+        });
+      }
       toast.success("Downloaded — also in your Library, opens with zero signal from here on.");
       // Feeds the local Learnova AI student-memory system so "documents
       // downloaded" on the dashboard is accurate — see
@@ -283,7 +309,7 @@ export function StudyPanel({
     <div>
       {/* PREVIEW — first thing on the page now, no tap required to see it. */}
       <div className="mb-4">
-        <InlineDocumentPreview materialId={material.id} filePath={material.file_path} title={material.title} />
+        <InlineDocumentPreview materialId={material.id} filePath={material.file_path} title={material.title} extraFilePaths={material.extra_file_paths} />
       </div>
 
       {/* Actions row: quiet by default, only shows what applies. Shown
@@ -825,4 +851,4 @@ function FailedState({ label, onRegenerate, regenerating }: { label: string; onR
       )}
     </div>
   );
-    }
+  }
