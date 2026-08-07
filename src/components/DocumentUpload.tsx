@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Upload, Loader2, CheckCircle2, FileWarning } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
 import { ensureFileExtension } from "@/lib/document-files";
@@ -46,6 +47,12 @@ function describeUploadError(e: unknown): string {
     return (e as { message: string }).message;
   }
   return "Something went wrong uploading that file — mind trying again?";
+}
+
+const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || IMAGE_NAME_RE.test(file.name);
 }
 
 function runAIOffMainThread(
@@ -240,15 +247,21 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   const [ocrProgress, setOcrProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Several photos selected at once — held here until the person says
+  // whether they're pages of one document or separate things.
+  const [pendingBundle, setPendingBundle] = useState<File[] | null>(null);
+  // "File 2 of 5" — only shown while uploading several *separate*
+  // documents one after another.
+  const [batchLabel, setBatchLabel] = useState<string | null>(null);
 
-  async function handleFile(file: File) {
+  async function handleFile(file: File, opts?: { navigateAfter?: boolean }): Promise<string | null> {
     if (!user) {
       setError("Sign in first — it takes a minute, and it's how we credit your upload.");
-      return;
+      return null;
     }
     if (file.size === 0) {
       setError("That file looks empty (0 bytes) — try exporting or downloading it again.");
-      return;
+      return null;
     }
 
     setError(null);
@@ -347,9 +360,184 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         });
       }
 
-      setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
+      if (opts?.navigateAfter ?? true) {
+        setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
+      }
+      return material.id;
     } catch (e) {
       console.error("Upload failed:", e);
+      setError(describeUploadError(e));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A multi-select of images all at once — ask whether they're pages of
+  // one document or separate things, rather than assuming either way.
+  // Anything else (one file, or a mixed-type multi-select) has nothing
+  // sensible to combine, so it goes straight through.
+  function handleFiles(files: File[]) {
+    if (files.length === 0) return;
+    if (files.length === 1) {
+      void handleFile(files[0]);
+      return;
+    }
+    if (files.every(isImageFile)) {
+      setPendingBundle(files);
+      return;
+    }
+    void handleSeparateFiles(files);
+  }
+
+  // Several separate documents, uploaded one after another rather than
+  // combined — each becomes its own material via the exact same path a
+  // single upload takes. Best-effort: one bad file doesn't stop the
+  // rest, and whatever fails is summarised at the end instead of
+  // silently vanishing (the single biggest risk of looping handleFile
+  // is failures being invisible, since a later success would otherwise
+  // just overwrite the earlier error on screen).
+  async function handleSeparateFiles(files: File[]) {
+    let lastSucceededId: string | null = null;
+    let failures = 0;
+    for (let i = 0; i < files.length; i++) {
+      setBatchLabel(`File ${i + 1} of ${files.length}`);
+      const id = await handleFile(files[i], { navigateAfter: false });
+      if (id) lastSucceededId = id;
+      else failures += 1;
+    }
+    setBatchLabel(null);
+    if (failures > 0) {
+      toast.error(
+        failures === files.length
+          ? "None of those uploaded — check your connection and try again."
+          : `${files.length - failures} of ${files.length} uploaded. ${failures} didn't make it — try those again.`,
+      );
+    }
+    if (lastSucceededId) {
+      const id = lastSucceededId;
+      setTimeout(() => navigate({ to: "/study/$id", params: { id } }), 400);
+    }
+  }
+
+  // The actual bundling feature: N photos become ONE material with N
+  // ordered pages (materials.file_path = page 1 / the cover,
+  // extra_file_paths = the rest), instead of forcing one upload — and
+  // one entry in the catalogue — per photo. Each image is still read
+  // through the exact same OCR pipeline as a single-image upload; the
+  // only difference is everything lands on one material row instead of
+  // several, with the pages concatenated (in order, clearly marked) for
+  // the AI pipeline to read as one document.
+  async function handleImageBundle(files: File[]) {
+    if (!user) {
+      setError("Sign in first — it takes a minute, and it's how we credit your upload.");
+      return;
+    }
+    if (files.some((f) => f.size === 0)) {
+      setError("One of those photos looks empty (0 bytes) — try again.");
+      return;
+    }
+
+    setError(null);
+    setDone(false);
+    setBusy(true);
+    setFileLabel(`${files.length}-page bundle`);
+    setFileSizeMB(files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024));
+    setStageIndex(0);
+    setOcrStage(null);
+    setOcrProgress(0);
+
+    let finalType: MaterialType = type;
+    if (!typeManuallySet) {
+      finalType = guessMaterialType(files[0].name);
+      setType(finalType);
+    }
+
+    try {
+      const bundleId = crypto.randomUUID();
+      const pageResults: { path: string; text: string; quality: string; confidence: number | null }[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setOcrStage(files.length > 1 ? `Reading page ${i + 1} of ${files.length}…` : null);
+        setOcrProgress(0);
+
+        const originalName = await ensureFileExtension(safeFileName(file.name), file);
+        const path = `${user.id}/${bundleId}-page-${i + 1}-${originalName}`;
+
+        const [{ text, quality, confidence }, uploadResult] = await Promise.all([
+          extractDocumentText(file, (p) => setOcrProgress(p.progress)),
+          supabase.storage.from("materials").upload(path, file),
+        ]);
+        if (uploadResult.error) throw uploadResult.error;
+
+        pageResults.push({ path, text, quality, confidence: confidence ?? null });
+      }
+
+      if (!typeManuallySet) {
+        const combinedForGuess = pageResults.map((p) => p.text).join("\n");
+        if (pageResults.some((p) => p.quality !== "none")) {
+          finalType = guessMaterialType(files[0].name, combinedForGuess);
+          setType(finalType);
+        }
+      }
+
+      const year = contentYear.trim() ? Number(contentYear.trim()) : null;
+      const validYear = year && Number.isFinite(year) ? year : null;
+      const combinedText = pageResults.map((p, i) => `[Page ${i + 1}]\n${p.text}`).join("\n\n");
+      const willGenerate = pageResults.some((p) => p.quality !== "none");
+      const readablePages = pageResults.filter((p) => p.quality !== "none").length;
+      const confidenceValues = pageResults.map((p) => p.confidence).filter((c): c is number => c !== null);
+      const confidence = confidenceValues.length ? Math.min(...confidenceValues) : null;
+      const confidenceNote =
+        readablePages < pageResults.length
+          ? `${pageResults.length - readablePages} of ${pageResults.length} pages didn't have any readable text.`
+          : null;
+
+      const originalFirstName = await ensureFileExtension(safeFileName(files[0].name), files[0]);
+      const title = safeDbText(originalFirstName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
+
+      setStageIndex(1);
+      const { data: material, error: insertError } = await supabase
+        .from("materials")
+        .insert({
+          title,
+          course_code: courseCode ?? null,
+          type: finalType,
+          content_year: validYear,
+          pages: pageResults.length,
+          file_path: pageResults[0].path,
+          extra_file_paths: pageResults.slice(1).map((p) => p.path),
+          status: willGenerate ? "processing" : "catalog_only",
+          source: "student",
+          uploaded_by: user.id,
+          tags: [],
+          content_confidence: confidence,
+          content_confidence_note: confidenceNote,
+          summary: willGenerate
+            ? null
+            : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+
+      setDone(true);
+
+      if (willGenerate) {
+        void runBackgroundGeneration({
+          materialId: material.id,
+          text: safeDbText(combinedText),
+          title,
+          courseCode: courseCode ?? null,
+          finalType,
+          validYear,
+        });
+      }
+
+      setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
+    } catch (e) {
+      console.error("Bundle upload failed:", e);
       setError(describeUploadError(e));
     } finally {
       setBusy(false);
@@ -359,8 +547,8 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) handleFile(f);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length) handleFiles(files);
   }
 
   return (
@@ -404,7 +592,51 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         </AnimatePresence>
       </div>
 
-      <motion.div
+      {pendingBundle ? (
+        <div className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 p-5">
+          <p className="text-sm font-semibold text-foreground">{pendingBundle.length} photos selected</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Are these pages of the same document — like a multi-page test — or separate things?
+          </p>
+          <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+            {pendingBundle.map((f, i) => (
+              <BundleThumb key={`${f.name}-${i}`} file={f} index={i} />
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const files = pendingBundle;
+                setPendingBundle(null);
+                void handleImageBundle(files);
+              }}
+              className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition-transform hover:scale-[1.02] active:scale-100"
+            >
+              Combine into one document
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const files = pendingBundle;
+                setPendingBundle(null);
+                void handleSeparateFiles(files);
+              }}
+              className="rounded-xl border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground hover:bg-surface-muted"
+            >
+              Upload separately
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingBundle(null)}
+              className="rounded-xl px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <motion.div
         onDragOver={(e) => {
           e.preventDefault();
           if (!busy) setDragging(true);
@@ -430,11 +662,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           <input
             ref={inputRef}
             type="file"
+            multiple
             className="hidden"
             disabled={busy}
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) handleFiles(files);
               e.target.value = "";
             }}
           />
@@ -460,6 +693,9 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           </AnimatePresence>
 
           <div className="text-sm font-semibold text-foreground">
+            {busy && batchLabel && (
+              <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-copper">{batchLabel}</div>
+            )}
             <AnimatePresence mode="wait">
               <motion.span
                 key={busy ? (stageIndex === 0 && ocrStage ? ocrStage : STAGES[stageIndex]) : done ? "done" : "idle"}
@@ -507,6 +743,26 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           {error && <p className="mt-1 text-xs font-medium text-destructive">{error}</p>}
         </label>
       </motion.div>
+      )}
+    </div>
+  );
+}
+
+function BundleThumb({ file, index }: { file: File; index: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  return (
+    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-surface-muted">
+      {url && <img src={url} alt={`Page ${index + 1}`} className="h-full w-full object-cover" />}
+      <span className="absolute bottom-0 right-0 rounded-tl-md bg-background/80 px-1 text-[9px] font-semibold text-foreground">
+        {index + 1}
+      </span>
     </div>
   );
 }
