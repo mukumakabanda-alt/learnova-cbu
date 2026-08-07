@@ -4,14 +4,13 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
-import { DocumentViewer } from "@/components/DocumentViewer";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useCatalog, useSavedMaterials, useToggleSaved, useIncrementDownload, type MaterialWithCourse } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { useOfflineStatus } from "@/lib/offline";
-import { forceDownload } from "@/lib/document-files";
+import { forceDownload, forceDownloadBundleAsZip } from "@/lib/document-files";
 import { saveMaterialOfflineFromDownload } from "@/lib/offline";
-import { FileText, Loader2, Search, Eye, Bookmark, Download, Check } from "lucide-react";
+import { FileText, Loader2, Search, Bookmark, Download, Check } from "lucide-react";
 
 export const Route = createFileRoute("/study")({
   head: () => ({
@@ -41,7 +40,7 @@ function statusLabel(status: string) {
 // called conditionally or from inside a bare .map() callback, only from
 // inside its own component). Gives this list the same three actions —
 // Open, Download, Save — every card everywhere in the app now has.
-function MaterialCard({ material: m, index, onPreview }: { material: MaterialWithCourse; index: number; onPreview: (m: MaterialWithCourse) => void }) {
+function MaterialCard({ material: m, index }: { material: MaterialWithCourse; index: number }) {
   const { data: saved } = useSavedMaterials();
   const toggleSaved = useToggleSaved();
   const isSaved = (saved ?? []).some((s) => s.material_id === m.id);
@@ -53,9 +52,15 @@ function MaterialCard({ material: m, index, onPreview }: { material: MaterialWit
     if (!m.file_path) return;
     setDownloading(true);
     try {
-      const blob = await forceDownload(m.file_path, m.title);
+      const extraFilePaths = m.extra_file_paths ?? [];
+      if (extraFilePaths.length > 0) {
+        await forceDownloadBundleAsZip([m.file_path, ...extraFilePaths], m.title);
+        await saveMaterialOfflineFromDownload(m);
+      } else {
+        const blob = await forceDownload(m.file_path, m.title);
+        await saveMaterialOfflineFromDownload(m, { blob, mime: blob.type });
+      }
       incrementDownload.mutate(m.id);
-      await saveMaterialOfflineFromDownload(m, { blob, mime: blob.type });
       toast.success("Downloaded — also in your Library, opens with zero signal.");
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
@@ -71,21 +76,25 @@ function MaterialCard({ material: m, index, onPreview }: { material: MaterialWit
       transition={{ duration: 0.22, delay: Math.min(index * 0.035, 0.4) }}
       className="group card-hover flex items-center gap-3 rounded-2xl border border-border bg-card p-4 hover:border-primary/30 hover:shadow-soft"
     >
-      <Link to="/study/$id" params={{ id: m.id }} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-        <FileText className="h-5 w-5" />
-      </Link>
-      <Link to="/study/$id" params={{ id: m.id }} className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
-          {downloaded && (
-            <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
-              <Check className="h-2.5 w-2.5" /> Downloaded
-            </span>
-          )}
+      {/* One tap target for the whole card — see the same fix on the
+          course page for why the separate eye-icon button is gone. */}
+      <Link to="/study/$id" params={{ id: m.id }} className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+          <FileText className="h-5 w-5" />
         </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {m.courses?.code ?? "General"} · {statusLabel(m.status)}
-          {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
+            {downloaded && (
+              <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
+                <Check className="h-2.5 w-2.5" /> Downloaded
+              </span>
+            )}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            {m.courses?.code ?? "General"} · {statusLabel(m.status)}
+            {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
+          </div>
         </div>
       </Link>
       {m.file_path && (
@@ -100,13 +109,6 @@ function MaterialCard({ material: m, index, onPreview }: { material: MaterialWit
             }`}
           >
             <Bookmark className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onPreview(m)}
-            aria-label={`Preview ${m.title}`}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
-          >
-            <Eye className="h-4 w-4" />
           </button>
           <button
             onClick={handleDownload}
@@ -130,11 +132,6 @@ function StudyHub() {
   const [showAll, setShowAll] = useState(false);
   const programmeFilter = !showAll && profile?.programme_code ? profile.programme_code : null;
   const { data: materials, isLoading } = useCatalog(q, programmeFilter);
-
-  // Stores the full material (not just id/path/title) so DocumentViewer
-  // can also cache it for offline use on download — see DocumentViewer's
-  // `material` prop.
-  const [viewerMaterial, setViewerMaterial] = useState<MaterialWithCourse | null>(null);
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -175,7 +172,7 @@ function StudyHub() {
               {isLoading ? (
                 <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
               ) : materials?.length ? (
-                materials.map((m, idx) => <MaterialCard key={m.id} material={m} index={idx} onPreview={setViewerMaterial} />)
+                materials.map((m, idx) => <MaterialCard key={m.id} material={m} index={idx} />)
               ) : (
                 <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-10 text-center text-sm text-muted-foreground">
                   Nothing here yet — be the first to upload something.
@@ -194,17 +191,8 @@ function StudyHub() {
         </div>
       </div>
 
-      <DocumentViewer
-        open={!!viewerMaterial}
-        onClose={() => setViewerMaterial(null)}
-        materialId={viewerMaterial?.id ?? ""}
-        filePath={viewerMaterial?.file_path ?? null}
-        title={viewerMaterial?.title ?? ""}
-        material={viewerMaterial}
-      />
-
       <SiteFooter />
       <MobileTabBar />
     </div>
   );
-              }
+  }
