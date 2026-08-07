@@ -29,9 +29,12 @@ export type OfflineBundle = {
   savedAt: string;
   /** Updated every time this material is actually opened while saved offline — powers the Library's "recently opened" ordering. */
   lastOpenedAt?: string;
-  /** The actual file bytes — optional, since older saves (from before this existed) won't have it, and a save can still succeed without it if fetching the file failed (unusually large file, connection dropped mid-fetch). The metadata is worth keeping either way. */
+  /** The actual file bytes — optional, since older saves (from before this existed) won't have it, and a save can still succeed without it if fetching the file failed (unusually large file, connection dropped mid-fetch). The metadata is worth keeping either way. For a bundled multi-image material, this is page 1 / the cover. */
   fileBlob?: Blob;
   fileMime?: string;
+  /** Pages 2..N of a bundled multi-image material, in order — undefined for an ordinary single-file material, and also left undefined (rather than a partial array) if any page failed to fetch, so a bundle is only ever "offline" when every page genuinely made it. */
+  extraFileBlobs?: Blob[];
+  extraFileMimes?: string[];
 };
 
 const DB_NAME = "learnova-offline";
@@ -95,6 +98,8 @@ export async function saveMaterialOffline(bundle: {
   quiz: QuizRow[];
   fileBlob?: Blob | null;
   fileMime?: string | null;
+  extraFileBlobs?: Blob[] | null;
+  extraFileMimes?: string[] | null;
 }): Promise<void> {
   const existing = await getOfflineMaterial(bundle.material.id);
   const full: OfflineBundle = {
@@ -107,6 +112,8 @@ export async function saveMaterialOffline(bundle: {
     // refresh) keeps whatever was already cached rather than wiping it.
     fileBlob: bundle.fileBlob ?? existing?.fileBlob,
     fileMime: bundle.fileMime ?? existing?.fileMime,
+    extraFileBlobs: bundle.extraFileBlobs ?? existing?.extraFileBlobs,
+    extraFileMimes: bundle.extraFileMimes ?? existing?.extraFileMimes,
   };
   await withStore("readwrite", (store) => store.put(full));
   notify();
@@ -120,27 +127,26 @@ export async function saveMaterialOffline(bundle: {
 // downloaded) to avoid fetching the same bytes twice — real bandwidth on
 // mobile data otherwise.
 //
-// Each of the three fetches (flashcards, quiz, file) is independent now
-// — this used to be a single Promise.all, so if any ONE of them failed
-// (a flaky flashcards fetch, an RLS hiccup, a dropped connection), the
-// whole save was thrown away, including the file — even though the
-// download this function is called right after had already succeeded.
-// A student could watch a file finish downloading and then just not
-// find it in their Library a minute later, with nothing telling them
-// why. Now whichever pieces succeed get saved; only genuinely losing
-// all three is worth logging. Best-effort throughout: never throws.
-// Whatever download this is paired with has already succeeded by the
-// time it's called — failing to ALSO cache it offline is a missed
-// bonus, not something that should surface as an error on top of a
-// successful download.
+// Each of the four fetches (flashcards, quiz, cover file, extra bundle
+// pages) is independent — so if any ONE of them fails (a flaky
+// flashcards fetch, an RLS hiccup, a dropped connection), the others
+// still get saved rather than the whole thing being thrown away. A
+// student could otherwise watch a file finish downloading and then just
+// not find it in their Library a minute later, with nothing telling
+// them why. Best-effort throughout: never throws — whatever download
+// this is paired with has already succeeded by the time it's called, so
+// failing to ALSO cache it offline is a missed bonus, not something that
+// should surface as an error on top of a successful download.
 export async function saveMaterialOfflineFromDownload(
   material: MaterialWithCourse,
   file?: { blob: Blob; mime: string } | null,
 ): Promise<void> {
-  const [flashcardsResult, quizResult, fileResult] = await Promise.allSettled([
+  const extraPaths = material.extra_file_paths ?? [];
+  const [flashcardsResult, quizResult, fileResult, extrasResult] = await Promise.allSettled([
     supabase.from("flashcards").select("*").eq("material_id", material.id),
     supabase.from("quiz_questions").select("*").eq("material_id", material.id),
     file ? Promise.resolve(file) : material.file_path ? fetchFileForOffline(material.file_path) : Promise.resolve(null),
+    extraPaths.length > 0 ? Promise.all(extraPaths.map((p) => fetchFileForOffline(p))) : Promise.resolve([]),
   ]);
 
   if (flashcardsResult.status === "rejected") {
@@ -152,10 +158,19 @@ export async function saveMaterialOfflineFromDownload(
   if (fileResult.status === "rejected") {
     console.error("Offline save: couldn't fetch the file, saving metadata only:", fileResult.reason);
   }
+  if (extrasResult.status === "rejected") {
+    console.error("Offline save: couldn't fetch this bundle's other pages, saving what succeeded:", extrasResult.reason);
+  }
 
   const flashcards = flashcardsResult.status === "fulfilled" ? (flashcardsResult.value.data ?? []) : [];
   const quiz = quizResult.status === "fulfilled" ? (quizResult.value.data ?? []) : [];
   const fetchedFile = fileResult.status === "fulfilled" ? fileResult.value : null;
+  const fetchedExtras = extrasResult.status === "fulfilled" ? extrasResult.value : [];
+
+  // A bundle only counts as offline-ready if every page came down — a
+  // partial set would silently show fewer pages than the document
+  // actually has, which is worse than plainly not being cached yet.
+  const extrasComplete = fetchedExtras.length === extraPaths.length && fetchedExtras.every((p) => p !== null);
 
   try {
     await saveMaterialOffline({
@@ -164,6 +179,8 @@ export async function saveMaterialOfflineFromDownload(
       quiz,
       fileBlob: fetchedFile?.blob,
       fileMime: fetchedFile?.mime,
+      extraFileBlobs: extrasComplete ? fetchedExtras.map((p) => p!.blob) : undefined,
+      extraFileMimes: extrasComplete ? fetchedExtras.map((p) => p!.mime) : undefined,
     });
   } catch (e) {
     console.error("Couldn't cache this material for offline use after download:", e);
