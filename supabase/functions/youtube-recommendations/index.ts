@@ -18,7 +18,39 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const RAW_RESULTS = 10;
 const MAX_RESULTS = 6;
+
+// Words the query-builder itself adds for academic framing ("university
+// lecture explained") or that are near-meaningless as a search signal on
+// their own. Scoring on these would let a video match just by having
+// "tutorial" in the title regardless of subject, which defeats the point.
+const SCAFFOLD_WORDS = new Set([
+  "university", "lecture", "explained", "tutorial", "example", "examples",
+  "demonstration", "experiment", "animation", "derivation", "solution",
+  "worked", "formula", "programming", "code", "real", "world", "past", "paper",
+]);
+const STOPWORDS = new Set(["a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "is", "are", "with", "by", "from"]);
+
+function significantTerms(query: string): string[] {
+  return [...new Set(
+    query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w) && !SCAFFOLD_WORDS.has(w)),
+  )];
+}
+
+function scoreVideo(video: { title: string; channelTitle: string }, terms: string[]): number {
+  const title = video.title.toLowerCase();
+  const channel = video.channelTitle.toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    if (title.includes(term)) score += 1;
+    else if (channel.includes(term)) score += 0.5;
+  }
+  return score;
+}
 
 type YoutubeVideo = {
   videoId: string;
@@ -52,7 +84,7 @@ Deno.serve(async (req: Request) => {
     const params = new URLSearchParams({
       part: "snippet",
       type: "video",
-      maxResults: String(MAX_RESULTS),
+      maxResults: String(RAW_RESULTS),
       safeSearch: "strict",
       relevanceLanguage: "en",
       q: query,
@@ -75,7 +107,24 @@ Deno.serve(async (req: Request) => {
         thumbnail: item.snippet?.thumbnails?.medium?.url ?? item.snippet?.thumbnails?.default?.url ?? null,
       }));
 
-    return jsonResponse({ videos });
+    // YouTube's own relevance ranking for a short, scoped query still
+    // regularly surfaces something that only shares one loose keyword
+    // with the material (a video about derivatives in general for a
+    // query built around one slide mentioning "slope"). Re-rank by how
+    // many of the query's real (non-scaffolding) terms actually show up
+    // in the title/channel, and drop anything that matches none of them
+    // — a shorter, on-topic list beats a full one padded with noise.
+    const terms = significantTerms(query);
+    let ranked = videos;
+    if (terms.length > 0) {
+      const scored = videos.map((v) => ({ v, score: scoreVideo(v, terms) }));
+      const anyMatch = scored.some((s) => s.score > 0);
+      ranked = anyMatch
+        ? scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).map((s) => s.v)
+        : []; // Nothing matched anything real — better to show no section than a wrong one.
+    }
+
+    return jsonResponse({ videos: ranked.slice(0, MAX_RESULTS) });
   } catch (error) {
     console.error(error);
     // Soft-fail here too — see file header.
