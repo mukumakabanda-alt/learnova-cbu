@@ -21,7 +21,6 @@ export type Database = {
           description: string
           lecturer: string | null
           programme_code: string | null
-          semester: number
           title: string
           topics: string[]
           updated_at: string
@@ -33,7 +32,6 @@ export type Database = {
           description?: string
           lecturer?: string | null
           programme_code?: string | null
-          semester?: number
           title: string
           topics?: string[]
           updated_at?: string
@@ -45,7 +43,6 @@ export type Database = {
           description?: string
           lecturer?: string | null
           programme_code?: string | null
-          semester?: number
           title?: string
           topics?: string[]
           updated_at?: string
@@ -202,6 +199,7 @@ export type Database = {
           course_code: string | null
           created_at: string
           download_count: number
+          extra_file_paths: string[]
           file_path: string | null
           flashcards_error: string | null
           flashcards_status: string
@@ -230,6 +228,7 @@ export type Database = {
           course_code?: string | null
           created_at?: string
           download_count?: number
+          extra_file_paths?: string[]
           file_path?: string | null
           flashcards_error?: string | null
           flashcards_status?: string
@@ -258,6 +257,7 @@ export type Database = {
           course_code?: string | null
           created_at?: string
           download_count?: number
+          extra_file_paths?: string[]
           file_path?: string | null
           flashcards_error?: string | null
           flashcards_status?: string
@@ -337,7 +337,6 @@ export type Database = {
           phone: string | null
           programme_code: string
           school: string
-          semester: number
           student_number: string | null
           updated_at: string
           weekly_progress: number
@@ -354,7 +353,6 @@ export type Database = {
           phone?: string | null
           programme_code?: string
           school?: string
-          semester?: number
           student_number?: string | null
           updated_at?: string
           weekly_progress?: number
@@ -371,7 +369,6 @@ export type Database = {
           phone?: string | null
           programme_code?: string
           school?: string
-          semester?: number
           student_number?: string | null
           updated_at?: string
           weekly_progress?: number
