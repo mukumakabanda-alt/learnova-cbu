@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
 import { useProgrammes, useCourses, usePopularCourses, useCourseMaterialStats, type CourseWithProgramme } from "@/lib/queries";
 import { useOfflineLibrary } from "@/lib/offline";
+import { useAuth } from "@/hooks/use-auth";
 import { Search, GraduationCap, ArrowRight, ChevronRight, History, Flame, Download, FileText } from "lucide-react";
 
 export const Route = createFileRoute("/browse")({
@@ -23,10 +24,26 @@ const ALL_SCOPE = "__all__";
 // change — the same "small catalogue, filter client-side" approach
 // useSearchCourses already uses.
 function Browse() {
+  const { profile } = useAuth();
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<string | null>(null); // null = top level, "__all__" = every course, else a programme code
   const [year, setYear] = useState<number | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [defaultApplied, setDefaultApplied] = useState(false);
+
+  // Land students in their own programme, not a directory of every
+  // programme at CBU — an Economics student's first screen should be
+  // Economics, not a picker that also lists Accounting, Engineering, Law…
+  // "Explore other programmes" below is the deliberate way out. This
+  // applies the default exactly once, the first time we know the
+  // student's programme, so it never fights a student who has since
+  // navigated elsewhere themselves.
+  useEffect(() => {
+    if (defaultApplied || !profile?.programme_code) return;
+    setScope(profile.programme_code);
+    setYear(profile.year ?? null);
+    setDefaultApplied(true);
+  }, [profile, defaultApplied]);
 
   const { data: programmes } = useProgrammes();
   const { data: courses } = useCourses();
@@ -76,6 +93,7 @@ function Browse() {
   }
 
   const selectedProgramme = scope && scope !== ALL_SCOPE ? (programmes ?? []).find((p) => p.code === scope) : undefined;
+  const isOwnProgramme = !!profile?.programme_code && scope === profile.programme_code;
   const yearOptions = selectedProgramme
     ? Array.from({ length: selectedProgramme.duration_years }, (_, i) => i + 1)
     : [1, 2, 3, 4, 5];
@@ -175,11 +193,23 @@ function Browse() {
           </>
         ) : (
           <div className="mt-8">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <button onClick={resetScope} className="font-semibold text-copper hover:underline">CBU</button>
-              <ChevronRight className="h-3 w-3" />
-              <span className="font-medium text-foreground">{scope === ALL_SCOPE ? "All courses" : selectedProgramme?.name}</span>
-            </div>
+            {isOwnProgramme ? (
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-copper">Your programme</div>
+                  <h2 className="mt-1 truncate font-display text-2xl text-foreground">{selectedProgramme?.name}</h2>
+                </div>
+                <button onClick={resetScope} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                  Explore other programmes
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <button onClick={resetScope} className="font-semibold text-copper hover:underline">CBU</button>
+                <ChevronRight className="h-3 w-3" />
+                <span className="font-medium text-foreground">{scope === ALL_SCOPE ? "All courses" : selectedProgramme?.name}</span>
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-2">
               <FilterChip active={!year} onClick={() => setYear(null)} label="All years" />
