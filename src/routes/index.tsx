@@ -29,7 +29,7 @@ export const Route = createFileRoute("/")({
 // something real to show — an empty catalogue, a first visit, or a
 // signed-out browser are all normal states, not bugs.
 function Home() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { data: programmes } = useProgrammes();
   const { data: courses } = useCourses();
   const { data: recentMaterials } = useRecentMaterials(6);
@@ -41,6 +41,14 @@ function Home() {
     if (!c.programme_code) continue;
     courseCountByProgramme.set(c.programme_code, (courseCountByProgramme.get(c.programme_code) ?? 0) + 1);
   }
+
+  // Own programme first — everyone else's programme still gets browsed
+  // from here, just not ahead of the one that's actually theirs.
+  const orderedProgrammes = [...(programmes ?? [])].sort((a, b) => {
+    if (a.code === profile?.programme_code) return -1;
+    if (b.code === profile?.programme_code) return 1;
+    return 0;
+  });
 
   const continuing = offlineItems[0];
   const hasSaved = !!user && (savedMaterials?.length ?? 0) > 0;
@@ -97,16 +105,24 @@ function Home() {
           Pick your programme
         </h2>
         <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(programmes ?? []).map((p) => {
+          {orderedProgrammes.map((p) => {
             const count = courseCountByProgramme.get(p.code) ?? 0;
+            const isOwn = p.code === profile?.programme_code;
             return (
               <Link
                 key={p.code}
                 to="/browse"
-                className="group flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
+                className={`group flex items-center justify-between gap-3 rounded-2xl border p-5 transition-colors hover:border-primary/40 ${isOwn ? "border-primary/40 bg-primary/5" : "border-border bg-card"}`}
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-foreground">{p.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-foreground">{p.name}</span>
+                    {isOwn && (
+                      <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-copper">
+                        Yours
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {p.school} · {count} course{count === 1 ? "" : "s"}
                   </div>
