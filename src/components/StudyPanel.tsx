@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
   Download, Maximize2, Share2, Heart, Bookmark, BookmarkCheck, WifiOff, Check, AlertTriangle, Youtube, Flame,
-  RefreshCw, Info,
+  RefreshCw, Info, HelpCircle, Map, ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -27,12 +27,38 @@ type QuizRow = Database["public"]["Tables"]["quiz_questions"]["Row"];
 type Material = MaterialWithCourse;
 type StageStatus = "pending" | "ready" | "failed" | string;
 
-const TABS = [
+// A past paper, a course outline and an assignment brief aren't "notes
+// with a quiz bolted on" — they get their own tab and their own content
+// (see StudyKitView below), reading materials.study_kit instead of the
+// flashcards/quiz tables. Notes/Slides/Summary/anything unrecognised
+// keep the exact original three tabs, unchanged.
+type MaterialKind = "past-paper" | "outline" | "assignment" | "standard";
+function materialKindOf(materialType: string | null | undefined): MaterialKind {
+  const t = (materialType ?? "").toLowerCase();
+  if (t.includes("past paper") || t.includes("exam")) return "past-paper";
+  if (t.includes("outline")) return "outline";
+  if (t.includes("assignment")) return "assignment";
+  return "standard";
+}
+
+const STANDARD_TABS = [
   { id: "summary", label: "Summary", icon: FileText },
   { id: "flashcards", label: "Flashcards", icon: Layers },
   { id: "quiz", label: "Quiz", icon: ListChecks },
 ] as const;
-type Tab = (typeof TABS)[number]["id"];
+const PAST_PAPER_TABS = [
+  { id: "summary", label: "Summary", icon: FileText },
+  { id: "kit", label: "Q&A", icon: HelpCircle },
+] as const;
+const OUTLINE_TABS = [
+  { id: "summary", label: "Summary", icon: FileText },
+  { id: "kit", label: "Key Topics", icon: Map },
+] as const;
+const ASSIGNMENT_TABS = [
+  { id: "summary", label: "Summary", icon: FileText },
+  { id: "kit", label: "Requirements", icon: ClipboardCheck },
+] as const;
+type Tab = "summary" | "flashcards" | "quiz" | "kit";
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -304,6 +330,9 @@ export function StudyPanel({
   const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
   const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path;
+  const kind = materialKindOf(material.type);
+  const TABS = kind === "past-paper" ? PAST_PAPER_TABS : kind === "outline" ? OUTLINE_TABS : kind === "assignment" ? ASSIGNMENT_TABS : STANDARD_TABS;
+  const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
 
   return (
     <div>
@@ -387,8 +416,14 @@ export function StudyPanel({
           <div className="text-sm font-semibold text-foreground">Generating your study tools…</div>
           <div className="w-full space-y-1.5 text-left">
             <StageRow label="Summary" status={summaryStatus} error={material.summary_error} />
-            <StageRow label="Flashcards" status={flashcardsStatus} error={material.flashcards_error} />
-            <StageRow label="Quiz" status={quizStatus} error={material.quiz_error} />
+            {kind === "standard" ? (
+              <>
+                <StageRow label="Flashcards" status={flashcardsStatus} error={material.flashcards_error} />
+                <StageRow label="Quiz" status={quizStatus} error={material.quiz_error} />
+              </>
+            ) : (
+              <StageRow label={kitLabel} status={material.study_kit ? "ready" : "pending"} error={null} />
+            )}
           </div>
           <p className="max-w-xs text-xs text-muted-foreground">
             This page updates itself as each part finishes — no need to refresh. The file above is already yours to view or download in the meantime.
@@ -522,6 +557,16 @@ export function StudyPanel({
                     regenerating={regenerating || !isOnline}
                   />
                 )}
+                {tab === "kit" && kind !== "standard" && (
+                  <StudyKitView
+                    kind={kind}
+                    studyKit={material.study_kit}
+                    errorHint={material.processing_error}
+                    canRegenerate={canRegenerate}
+                    onRegenerate={handleRegenerate}
+                    regenerating={regenerating || !isOnline}
+                  />
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -631,6 +676,206 @@ function RelatedList({ title, items }: { title: string; items: MaterialRow[] }) 
         ))}
       </div>
     </div>
+  );
+}
+
+// The adaptive second tab — content and shape depend entirely on `kind`,
+// reading materials.study_kit (a flexible JSON column; see the migration
+// and process-material for exactly what each kind writes into it).
+function StudyKitView({
+  kind,
+  studyKit,
+  errorHint,
+  canRegenerate,
+  onRegenerate,
+  regenerating,
+}: {
+  kind: Exclude<MaterialKind, "standard">;
+  studyKit: unknown;
+  errorHint: string | null;
+  canRegenerate: boolean;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
+}) {
+  if (!studyKit || typeof studyKit !== "object") {
+    return <FailedState label={errorHint || "This part couldn't be generated."} onRegenerate={canRegenerate ? onRegenerate : undefined} regenerating={regenerating} />;
+  }
+  const kit = studyKit as Record<string, any>;
+
+  if (kind === "past-paper") {
+    const questions: { number: string; text: string; marks: number | null }[] = Array.isArray(kit.questions) ? kit.questions : [];
+    const guidanceByNumber = new Map<string, string>(
+      (Array.isArray(kit.answer_guidance) ? kit.answer_guidance : []).map((a: any) => [String(a.question_number), String(a.guidance ?? "")]),
+    );
+    const topics: string[] = Array.isArray(kit.topics_tested) ? kit.topics_tested : [];
+    if (questions.length === 0) return <EmptyState label="No questions extracted from this paper yet." />;
+    return (
+      <div className="space-y-3">
+        {(topics.length > 0 || kit.difficulty) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {kit.difficulty && <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-medium text-copper">{kit.difficulty}</span>}
+            {topics.map((t) => (
+              <span key={t} className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">{t}</span>
+            ))}
+          </div>
+        )}
+        {questions.map((q, i) => (
+          <PastPaperQuestion key={i} question={q} guidance={guidanceByNumber.get(q.number) || null} />
+        ))}
+      </div>
+    );
+  }
+
+  if (kind === "outline") {
+    const topics: { title: string; description: string }[] = Array.isArray(kit.topics) ? kit.topics : [];
+    const plan: string[] = Array.isArray(kit.revision_plan) ? kit.revision_plan : [];
+    const outcomes: string[] = Array.isArray(kit.learning_outcomes) ? kit.learning_outcomes : [];
+    if (topics.length === 0) return <EmptyState label="No topic list extracted from this outline yet." />;
+    return (
+      <div className="space-y-5">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Topics covered</div>
+          <div className="mt-3 grid gap-2">
+            {topics.map((t, i) => (
+              <div key={i} className="flex items-start gap-3 rounded-xl border border-border bg-card p-3">
+                <div className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary">
+                  {String(i + 1).padStart(2, "0")}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-foreground">{t.title}</div>
+                  {t.description && <div className="mt-0.5 text-xs text-muted-foreground">{t.description}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {plan.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">Suggested revision order</div>
+            <ol className="mt-3 space-y-2">
+              {plan.map((s, i) => (
+                <li key={i} className="flex gap-2 text-sm text-foreground">
+                  <span className="shrink-0 font-semibold text-primary">{i + 1}.</span> {s}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        {outcomes.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">You should be able to</div>
+            <ul className="mt-3 space-y-1.5">
+              {outcomes.map((s, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" /> {s}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // assignment
+  const requirements: string[] = Array.isArray(kit.requirements) ? kit.requirements : [];
+  const deliverables: string[] = Array.isArray(kit.deliverables) ? kit.deliverables : [];
+  const checklist: string[] = Array.isArray(kit.checklist) ? kit.checklist : [];
+  const deadlineNote: string | null = typeof kit.deadline_note === "string" ? kit.deadline_note : null;
+  if (requirements.length === 0) return <EmptyState label="No requirements extracted from this brief yet." />;
+  return (
+    <div className="space-y-5">
+      {deadlineNote && (
+        <div className="flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-2 text-xs font-medium text-copper">
+          <AlertTriangle className="h-3.5 w-3.5" /> {deadlineNote}
+        </div>
+      )}
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-copper">Requirements</div>
+        <ul className="mt-3 space-y-1.5">
+          {requirements.map((s, i) => (
+            <li key={i} className="text-sm text-foreground">• {s}</li>
+          ))}
+        </ul>
+      </div>
+      {deliverables.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Deliverables</div>
+          <ul className="mt-3 space-y-1.5">
+            {deliverables.map((s, i) => (
+              <li key={i} className="text-sm text-foreground">• {s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {checklist.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Getting started</div>
+          <p className="mt-1 text-xs text-muted-foreground">Structure and process only — this won't write the assignment for you.</p>
+          <div className="mt-3 space-y-2">
+            {checklist.map((s, i) => (
+              <ChecklistItem key={i} text={s} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Attempt-first, reveal-after — the same self-testing spirit as the
+// flashcard/quiz flip interaction elsewhere on this page, since a past
+// paper is for practising against, not reading passively.
+function PastPaperQuestion({
+  question,
+  guidance,
+}: {
+  question: { number: string; text: string; marks: number | null };
+  guidance: string | null;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-foreground">
+          Q{question.number}. {question.text}
+        </div>
+        {question.marks != null && (
+          <span className="shrink-0 rounded-md bg-surface-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{question.marks} marks</span>
+        )}
+      </div>
+      {guidance &&
+        (revealed ? (
+          <div className="mt-3 rounded-xl border border-teal/20 bg-teal/5 p-3 text-sm text-foreground">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-teal">Answer guidance</div>
+            {guidance}
+          </div>
+        ) : (
+          <button onClick={() => setRevealed(true)} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+            <HelpCircle className="h-3.5 w-3.5" /> Reveal answer guidance
+          </button>
+        ))}
+    </div>
+  );
+}
+
+// Session-only (not persisted) — just lets a student visually track
+// progress through a checklist while they work, the same way they'd tick
+// items on a printed sheet.
+function ChecklistItem({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={() => setDone((d) => !d)}
+      className={`flex w-full items-start gap-2.5 rounded-xl border p-3 text-left text-sm transition-colors ${
+        done ? "border-teal/40 bg-teal/5 text-muted-foreground line-through" : "border-border bg-card text-foreground"
+      }`}
+    >
+      <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${done ? "border-teal bg-teal text-white" : "border-border"}`}>
+        {done && <Check className="h-3 w-3" />}
+      </span>
+      {text}
+    </button>
   );
 }
 
@@ -851,4 +1096,4 @@ function FailedState({ label, onRegenerate, regenerating }: { label: string; onR
       )}
     </div>
   );
-  }
+}
