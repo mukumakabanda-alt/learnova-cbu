@@ -86,9 +86,9 @@ export function useDeleteProgramme() {
   });
 }
 
-export function useCourses(filters?: { programmeCode?: string | null; year?: number | null }) {
+export function useCourses(filters?: { programmeCode?: string | null; year?: number | null; enabled?: boolean }) {
   return useQuery({
-    queryKey: ["courses", filters],
+    queryKey: ["courses", filters?.programmeCode ?? null, filters?.year ?? null],
     queryFn: async (): Promise<CourseWithProgramme[]> => {
       let q = supabase.from("courses").select("*, programmes(name, school)").order("code");
       if (filters?.programmeCode) q = q.eq("programme_code", filters.programmeCode);
@@ -97,6 +97,7 @@ export function useCourses(filters?: { programmeCode?: string | null; year?: num
       if (error) throw error;
       return (data ?? []) as CourseWithProgramme[];
     },
+    enabled: filters?.enabled ?? true,
   });
 }
 
@@ -980,4 +981,4 @@ export function useUpdateSiteSettings() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-  }
+    }
