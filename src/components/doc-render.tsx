@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, FileWarning, FileArchive, ChevronRight, ArrowLeft, File as FileIcon } from "lucide-react";
+import DOMPurify from "dompurify";
 import { loadPdfjs } from "@/lib/pdfjs";
 import { openZip } from "@/lib/zip-reader";
 
@@ -263,7 +264,7 @@ export function DocxRenderer({ blob }: { blob: Blob }) {
 
   return (
     <Paper>
-      <div className="doc-prose" dangerouslySetInnerHTML={{ __html: data }} />
+      <div className="doc-prose" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(data) }} />
     </Paper>
   );
 }
@@ -561,7 +562,7 @@ export function TextRenderer({ text, fileName }: { text: string; fileName: strin
   if (isMarkdown) {
     return (
       <Paper>
-        <div className="doc-prose" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="doc-prose" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
       </Paper>
     );
   }
@@ -831,8 +832,6 @@ export function BlobRenderer({
         if (!genericOverSpecific) resolved = sniffed;
       }
 
-
-
       if (resolved === "image" || resolved === "video" || resolved === "audio") {
         url = URL.createObjectURL(blob);
         setObjectUrl(url);
@@ -913,4 +912,4 @@ function UnknownRenderer({ blob, fileName }: { blob: Blob; fileName: string }) {
       )}
     </Paper>
   );
-             }
+}
