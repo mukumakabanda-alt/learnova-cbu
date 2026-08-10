@@ -21,11 +21,17 @@
 //      independently-retried chunk summaries) if it's very long — so
 //      large documents degrade gracefully instead of being truncated
 //      blind.
-//   2. Runs summary, flashcards and quiz as three INDEPENDENT calls,
-//      concurrently, each retried on transient failures. Each one is
-//      persisted the moment it succeeds and marked with its own
-//      pending/ready/failed status — so if the quiz call fails, the
-//      student still gets a summary and flashcards instead of nothing.
+//   2. Branches by material kind (see materialKind() below). Notes /
+//      Slides / Summary / anything unrecognised run summary, flashcards
+//      and quiz as three INDEPENDENT calls, concurrently, each retried
+//      on transient failures — unchanged from before. Past Paper /
+//      Outline / Assignment run summary + a type-specific "study kit"
+//      instead (extracted questions + answer guidance, a topic/revision
+//      breakdown, or a requirements/checklist breakdown respectively) —
+//      see materials.study_kit and the three generateXKit() functions.
+//      Either way, each stage is persisted the moment it succeeds and
+//      marked with its own pending/ready/failed status — so a failure in
+//      one stage never costs the others.
 //   3. Fixes a real correctness bug in the old quiz normalizer: filtering
 //      out a blank option used to leave `correct_index` pointing at
 //      whatever ended up in that slot after the array shifted. Options
@@ -419,6 +425,181 @@ ${workingText}
   return quiz;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Type-aware study kits — a past paper, a course outline and an
+// assignment brief are not "notes with a quiz bolted on." Each gets its
+// own shape, written to materials.study_kit (see the migration adding
+// that column), and skips flashcards/quiz entirely rather than
+// generating a generic multiple-choice quiz nobody asked for out of a
+// document that's already a set of exam questions, a syllabus, or a
+// task brief.
+// ═══════════════════════════════════════════════════════════════════
+type StudyKit = Record<string, unknown>;
+type MaterialKind = "past-paper" | "outline" | "assignment" | "standard";
+
+function materialKind(materialType: string): MaterialKind {
+  const t = materialType.toLowerCase();
+  if (t.includes("past paper") || t.includes("exam")) return "past-paper";
+  if (t.includes("outline")) return "outline";
+  if (t.includes("assignment")) return "assignment";
+  return "standard";
+}
+
+async function generatePastPaperKit(
+  lovableApiKey: string,
+  workingText: string,
+  title: string,
+  wasCondensed: boolean,
+): Promise<StudyKit> {
+  const prompt = `${INJECTION_GUARD}
+
+This is a past exam paper titled "${title}"${wasCondensed ? " — you're given a condensed extract of a much longer document, not the full original text" : ""}. A student revising for their own exam wants to practise against it, with an answer key to check themselves afterwards — this is normal, legitimate exam revision, not a request to complete graded work.
+
+Return ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
+{
+  "questions": [{ "number": string, "text": string, "marks": number | null }],
+  "answer_guidance": [{ "question_number": string, "guidance": string }],
+  "topics_tested": [string],
+  "difficulty": string | null
+}
+
+Rules:
+- Extract the actual questions as written in the text (number them as the paper does — "1", "2a", "3(i)", whatever it uses).
+- For each question, write real, substantive answer guidance: the key points, method, or model answer a student should be able to produce — not just a one-line hint. Long-form or essay questions get a structured outline of what a strong answer covers; calculation questions get the method and final answer; short-answer questions get the actual answer.
+- topics_tested: 3-8 short topic tags covering what this paper actually examines.
+- difficulty: one short phrase describing overall difficulty if it's clear from the text (e.g. "mostly straightforward", "a mix of easy and challenging questions"), otherwise null.
+- If the text doesn't actually look like exam questions, do your best with whatever structure it has rather than inventing questions that aren't there.
+
+TEXT:
+"""
+${workingText}
+"""`;
+  const raw = await callGemini(lovableApiKey, prompt, { retries: 2 });
+  const parsed = extractJsonObject(raw);
+  const questions = Array.isArray(parsed.questions)
+    ? parsed.questions
+        .map((q: any) => ({
+          number: safeDbText(q?.number, "?"),
+          text: safeDbText(q?.text),
+          marks: typeof q?.marks === "number" ? q.marks : null,
+        }))
+        .filter((q: { text: string }) => q.text)
+        .slice(0, 60)
+    : [];
+  if (questions.length === 0) throw new Error("The AI couldn't find usable questions in this paper.");
+  const answerGuidance = Array.isArray(parsed.answer_guidance)
+    ? parsed.answer_guidance
+        .map((a: any) => ({ question_number: safeDbText(a?.question_number, "?"), guidance: safeDbText(a?.guidance) }))
+        .filter((a: { guidance: string }) => a.guidance)
+        .slice(0, 60)
+    : [];
+  const topicsTested = Array.isArray(parsed.topics_tested)
+    ? parsed.topics_tested.map((t: unknown) => safeDbText(t)).filter(Boolean).slice(0, 8)
+    : [];
+  const difficulty = typeof parsed.difficulty === "string" ? safeDbText(parsed.difficulty) || null : null;
+  return { questions, answer_guidance: answerGuidance, topics_tested: topicsTested, difficulty };
+}
+
+async function generateOutlineKit(
+  lovableApiKey: string,
+  workingText: string,
+  title: string,
+  wasCondensed: boolean,
+): Promise<StudyKit> {
+  const prompt = `${INJECTION_GUARD}
+
+This is a course outline/syllabus titled "${title}"${wasCondensed ? " — you're given a condensed extract of a much longer document, not the full original text" : ""}. A student wants to understand the shape of the whole course at a glance and plan their revision around it.
+
+Return ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
+{
+  "topics": [{ "title": string, "description": string }],
+  "revision_plan": [string],
+  "learning_outcomes": [string]
+}
+
+Rules:
+- topics: the actual topics/weeks/units this course covers, in the order the outline presents them, each with a one-sentence description of what it covers.
+- revision_plan: 4-8 ordered, practical steps for working through this course's material (e.g. "Start with [topic] since later topics build on it", "Group [topics] together — they're closely related").
+- learning_outcomes: what the outline says a student should be able to do by the end, if stated; otherwise a reasonable inference from the topic list.
+
+TEXT:
+"""
+${workingText}
+"""`;
+  const raw = await callGemini(lovableApiKey, prompt, { retries: 2 });
+  const parsed = extractJsonObject(raw);
+  const topics = Array.isArray(parsed.topics)
+    ? parsed.topics
+        .map((t: any) => ({ title: safeDbText(t?.title), description: safeDbText(t?.description) }))
+        .filter((t: { title: string }) => t.title)
+        .slice(0, 40)
+    : [];
+  if (topics.length === 0) throw new Error("The AI couldn't find a usable topic list in this outline.");
+  const revisionPlan = Array.isArray(parsed.revision_plan)
+    ? parsed.revision_plan.map((s: unknown) => safeDbText(s)).filter(Boolean).slice(0, 10)
+    : [];
+  const learningOutcomes = Array.isArray(parsed.learning_outcomes)
+    ? parsed.learning_outcomes.map((s: unknown) => safeDbText(s)).filter(Boolean).slice(0, 15)
+    : [];
+  return { topics, revision_plan: revisionPlan, learning_outcomes: learningOutcomes };
+}
+
+async function generateAssignmentKit(
+  lovableApiKey: string,
+  workingText: string,
+  title: string,
+  wasCondensed: boolean,
+): Promise<StudyKit> {
+  const prompt = `${INJECTION_GUARD}
+
+This is an assignment brief titled "${title}"${wasCondensed ? " — you're given a condensed extract of a much longer document, not the full original text" : ""}. Help the student understand exactly what's being asked and organise their approach — do NOT produce the actual answers, essay content, code, or worked solution the assignment is asking them to submit. This is graded coursework; doing the work for them isn't help, it's a different thing.
+
+Return ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:
+{
+  "requirements": [string],
+  "deliverables": [string],
+  "checklist": [string],
+  "deadline_note": string | null
+}
+
+Rules:
+- requirements: the actual instructions/requirements as stated (word count, format, topics to cover, marking criteria if given) — restated clearly, not the content that would satisfy them.
+- deliverables: what needs to be submitted and in what form.
+- checklist: 5-10 concrete, actionable steps for approaching and organising the work — structure and process only, never draft content or answers.
+- deadline_note: the stated deadline/submission date if present in the text, else null.
+
+TEXT:
+"""
+${workingText}
+"""`;
+  const raw = await callGemini(lovableApiKey, prompt, { retries: 2 });
+  const parsed = extractJsonObject(raw);
+  const requirements = Array.isArray(parsed.requirements)
+    ? parsed.requirements.map((s: unknown) => safeDbText(s)).filter(Boolean).slice(0, 20)
+    : [];
+  if (requirements.length === 0) throw new Error("The AI couldn't find clear requirements in this brief.");
+  const deliverables = Array.isArray(parsed.deliverables)
+    ? parsed.deliverables.map((s: unknown) => safeDbText(s)).filter(Boolean).slice(0, 10)
+    : [];
+  const checklist = Array.isArray(parsed.checklist)
+    ? parsed.checklist.map((s: unknown) => safeDbText(s)).filter(Boolean).slice(0, 15)
+    : [];
+  const deadlineNote = typeof parsed.deadline_note === "string" ? safeDbText(parsed.deadline_note) || null : null;
+  return { requirements, deliverables, checklist, deadline_note: deadlineNote };
+}
+
+async function generateStudyKit(
+  kind: Exclude<MaterialKind, "standard">,
+  lovableApiKey: string,
+  workingText: string,
+  title: string,
+  wasCondensed: boolean,
+): Promise<StudyKit> {
+  if (kind === "past-paper") return generatePastPaperKit(lovableApiKey, workingText, title, wasCondensed);
+  if (kind === "outline") return generateOutlineKit(lovableApiKey, workingText, title, wasCondensed);
+  return generateAssignmentKit(lovableApiKey, workingText, title, wasCondensed);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -503,11 +684,90 @@ Deno.serve(async (req: Request) => {
     await admin.from("pipeline_invocations").insert({ user_id: callerId, material_id: materialId });
 
     const materialType = material.type ?? "Notes";
+    const kind = materialKind(materialType);
     const { text: workingText, wasCondensed, coveragePct } = await buildWorkingText(lovableApiKey, text);
     const confidenceNote =
       wasCondensed && coveragePct < 100
         ? `This document was long enough that only about ${coveragePct}% of it was used to generate study tools.`
         : null;
+
+    if (kind !== "standard") {
+      // Past Paper / Outline / Assignment: a document that already IS a
+      // set of questions, or a syllabus, or a task brief doesn't need a
+      // generic multiple-choice quiz built from itself — it needs
+      // something shaped like what it actually is. Two stages instead of
+      // three: summary (still useful context) + the type-specific kit.
+      // Flashcards/quiz are marked "ready" with nothing in them, rather
+      // than left "pending" or "failed" — this material was never going
+      // to have them, which is a completed state, not a stuck or broken
+      // one. The study page decides which tabs to even show based on
+      // materials.type, not on these statuses.
+      await admin
+        .from("materials")
+        .update({ flashcards_status: "ready", flashcards_error: null, quiz_status: "ready", quiz_error: null })
+        .eq("id", materialId);
+
+      const [summaryOutcome, kitOutcome] = await Promise.allSettled([
+        (async () => {
+          const result = await generateSummary(lovableApiKey, workingText, title, materialType, wasCondensed);
+          const { error } = await admin
+            .from("materials")
+            .update({
+              summary: result.summary,
+              tags: result.tags,
+              ...(material.content_year == null && result.detectedYear != null ? { content_year: result.detectedYear } : {}),
+              summary_status: "ready",
+              summary_error: null,
+            })
+            .eq("id", materialId);
+          if (error) throw error;
+        })(),
+        (async () => {
+          const kit = await generateStudyKit(kind, lovableApiKey, workingText, title, wasCondensed);
+          const { error } = await admin.from("materials").update({ study_kit: kit }).eq("id", materialId);
+          if (error) throw error;
+        })(),
+      ]);
+
+      const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
+
+      async function markSummaryFailed(outcome: PromiseRejectedResult): Promise<string> {
+        const message = safeDbText(outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason), "Generation failed.");
+        await admin.from("materials").update({ summary_status: "failed", summary_error: message }).eq("id", materialId);
+        return message;
+      }
+      function kitFailureMessage(outcome: PromiseRejectedResult): string {
+        return safeDbText(outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason), "Generation failed.");
+      }
+
+      const stageMessages: string[] = [];
+      if (summaryOutcome.status === "rejected") stageMessages.push(`Summary: ${await markSummaryFailed(summaryOutcome)}`);
+      if (kitOutcome.status === "rejected") stageMessages.push(`${kitLabel}: ${kitFailureMessage(kitOutcome)}`);
+
+      const anySucceeded = summaryOutcome.status === "fulfilled" || kitOutcome.status === "fulfilled";
+      const overallStatus = anySucceeded ? "ready" : "failed";
+      const combinedNote = [confidenceNote, stageMessages.length ? stageMessages.join(" · ") : null].filter(Boolean).join(" ") || null;
+
+      await admin
+        .from("materials")
+        .update({
+          status: overallStatus,
+          generation_source: "ai",
+          processing_error: overallStatus === "failed" ? combinedNote : stageMessages.length ? stageMessages.join(" · ") : null,
+          content_confidence_note: confidenceNote,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", materialId);
+
+      return jsonResponse({
+        ok: anySucceeded,
+        status: overallStatus,
+        stages: {
+          summary: summaryOutcome.status === "fulfilled" ? "ready" : "failed",
+          study_kit: kitOutcome.status === "fulfilled" ? "ready" : "failed",
+        },
+      });
+    }
 
     const [summaryOutcome, flashcardsOutcome, quizOutcome] = await Promise.allSettled([
       (async () => {
