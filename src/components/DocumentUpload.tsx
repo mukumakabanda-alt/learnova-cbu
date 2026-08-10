@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, Link } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Upload, Loader2, CheckCircle2, FileWarning } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, FileWarning, LogIn } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
 import { ensureFileExtension } from "@/lib/document-files";
 import { useAuth } from "@/hooks/use-auth";
+import { useCourses } from "@/lib/queries";
 import { LearnovaAI } from "@/lib/learnova-ai";
 
 const MATERIAL_TYPES = ["Notes", "Past Paper", "Slides", "Summary", "Assignment", "Outline"] as const;
@@ -53,6 +54,30 @@ const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/") || IMAGE_NAME_RE.test(file.name);
+}
+
+function normalizeCourseCode(s: string): string {
+  return s.toUpperCase().replace(/[\s-]+/g, "");
+}
+
+// Auto-categorization: a document's own course code is almost always
+// printed on it somewhere near the top (a header, a title page, an exam
+// cover sheet — "BEC 210", "CE301", "MAT-101 Test 2"), so this is a
+// plain pattern match against the student's own course list rather than
+// an AI call — instant, free, and it either finds a real match or
+// honestly finds nothing (never a confident-sounding guess). Only
+// scans the first ~4000 characters, since a course code buried deep in
+// a 40-page document's body text is far more likely to be a stray
+// reference to a DIFFERENT course than the one this document belongs to.
+function detectCourseCode(text: string, candidates: { code: string }[]): string | null {
+  if (candidates.length === 0) return null;
+  const known = new Map(candidates.map((c) => [normalizeCourseCode(c.code), c.code]));
+  const haystack = text.slice(0, 4000);
+  for (const m of haystack.matchAll(/\b([A-Za-z]{2,6})[\s-]?(\d{2,4}[A-Za-z]?)\b/g)) {
+    const hit = known.get(normalizeCourseCode(`${m[1]}${m[2]}`));
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function runAIOffMainThread(
@@ -231,9 +256,17 @@ async function runBackgroundGeneration(params: {
 }
 
 export function DocumentUpload({ courseCode }: { courseCode?: string }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Only fetched on the general Study-page uploader (no courseCode was
+  // already given) — a course page's uploader already knows its course,
+  // so there's nothing to detect and nothing worth fetching for it.
+  const { data: candidateCourses } = useCourses({
+    enabled: !courseCode,
+    programmeCode: profile?.programme_code ?? undefined,
+  });
 
   const [type, setType] = useState<MaterialType>("Notes");
   const [typeManuallySet, setTypeManuallySet] = useState(false);
@@ -324,11 +357,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // straight to the study page and watches it fill in live, rather
       // than this screen blocking until the AI call finishes.
       setStageIndex(1);
+      const detectedCourseCode = courseCode ?? (quality !== "none" ? detectCourseCode(text, candidateCourses ?? []) : null);
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
           title,
-          course_code: courseCode ?? null,
+          course_code: detectedCourseCode,
           type: finalType,
           content_year: validYear,
           pages,
@@ -498,11 +532,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const title = safeDbText(originalFirstName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
 
       setStageIndex(1);
+      const detectedCourseCode = courseCode ?? (willGenerate ? detectCourseCode(combinedText, candidateCourses ?? []) : null);
       const { data: material, error: insertError } = await supabase
         .from("materials")
         .insert({
           title,
-          course_code: courseCode ?? null,
+          course_code: detectedCourseCode,
           type: finalType,
           content_year: validYear,
           pages: pageResults.length,
@@ -549,6 +584,28 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
     setDragging(false);
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length) handleFiles(files);
+  }
+
+  // Signed-out visitors can browse and read everything, but uploading
+  // needs an account (it credits the upload to someone, and it's how
+  // the material ends up on a real programme/course). This used to let
+  // anyone pick a file, sit through OCR, and only THEN find out — via a
+  // small inline error easy to miss — that none of it was going
+  // anywhere. Now there's nothing to interact with here at all until
+  // they're signed in; the file picker never even opens.
+  if (!user) {
+    return (
+      <Link
+        to="/auth"
+        className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border bg-surface-muted p-8 text-center transition-colors hover:border-primary/40"
+      >
+        <LogIn className="h-6 w-6 text-copper" />
+        <div className="text-sm font-semibold text-foreground">Sign in to upload</div>
+        <p className="max-w-xs text-xs text-muted-foreground">
+          Takes under a minute — once you're in, this becomes a summary, flashcards and a quiz for you and everyone after you.
+        </p>
+      </Link>
+    );
   }
 
   return (
