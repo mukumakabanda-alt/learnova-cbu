@@ -212,6 +212,7 @@ export type Database = {
           quiz_status: string
           source: string
           status: Database["public"]["Enums"]["material_status"]
+          study_kit: Json | null
           summary: string | null
           summary_error: string | null
           summary_status: string
@@ -241,6 +242,7 @@ export type Database = {
           quiz_status?: string
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
+          study_kit?: Json | null
           summary?: string | null
           summary_error?: string | null
           summary_status?: string
@@ -270,6 +272,7 @@ export type Database = {
           quiz_status?: string
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
+          study_kit?: Json | null
           summary?: string | null
           summary_error?: string | null
           summary_status?: string
