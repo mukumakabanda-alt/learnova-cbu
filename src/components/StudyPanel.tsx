@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
   Download, Maximize2, Share2, Heart, Bookmark, BookmarkCheck, WifiOff, Check, AlertTriangle, Youtube, Flame,
-  RefreshCw, Info, HelpCircle, Map, ClipboardCheck,
+  RefreshCw, Info, HelpCircle, Map as MapIcon, ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -52,7 +52,7 @@ const PAST_PAPER_TABS = [
 ] as const;
 const OUTLINE_TABS = [
   { id: "summary", label: "Summary", icon: FileText },
-  { id: "kit", label: "Key Topics", icon: Map },
+  { id: "kit", label: "Key Topics", icon: MapIcon },
 ] as const;
 const ASSIGNMENT_TABS = [
   { id: "summary", label: "Summary", icon: FileText },
