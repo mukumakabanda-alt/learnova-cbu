@@ -738,8 +738,9 @@ Deno.serve(async (req: Request) => {
         .update({ flashcards_status: "ready", flashcards_error: null, quiz_status: "ready", quiz_error: null })
         .eq("id", materialId);
 
+      const deadlineAt = Date.now() + STAGE_BUDGET_MS;
       const [summaryOutcome, kitOutcome] = await Promise.allSettled([
-        (async () => {
+        raceDeadline((async () => {
           const result = await generateSummary(lovableApiKey, workingText, title, materialType, wasCondensed);
           const { error } = await admin
             .from("materials")
@@ -752,13 +753,14 @@ Deno.serve(async (req: Request) => {
             })
             .eq("id", materialId);
           if (error) throw error;
-        })(),
-        (async () => {
+        })(), deadlineAt, "Summary"),
+        raceDeadline((async () => {
           const kit = await generateStudyKit(kind, lovableApiKey, workingText, title, wasCondensed);
           const { error } = await admin.from("materials").update({ study_kit: kit }).eq("id", materialId);
           if (error) throw error;
-        })(),
+        })(), deadlineAt, "Study kit"),
       ]);
+
 
       const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
 
