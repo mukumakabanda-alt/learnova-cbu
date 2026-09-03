@@ -296,6 +296,10 @@ export function StudyPanel({
   // extraction the original upload did (see document-text.ts) before
   // calling the edge function again.
   async function handleRegenerate() {
+    if (!user) {
+      toast.error("Sign in to regenerate this material's study tools.");
+      return;
+    }
     if (!material.file_path) {
       toast.error("There's no saved file for this material to regenerate from.");
       return;

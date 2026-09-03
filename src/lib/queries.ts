@@ -284,6 +284,16 @@ export function useRegenerateMaterial() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { materialId: string; text: string; title: string }) => {
+      // The edge function runs as the caller and rejects anonymous
+      // requests with 401 "Sign in required." Check first, so a
+      // signed-out visitor gets a plain explanation instead of a raw
+      // edge-function error — and, more importantly, so we don't flip
+      // the material into "processing" for a run that can never start.
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        throw new Error("Sign in to regenerate this material's study tools.");
+      }
+
       // Flip back to "processing" first — the edge function refuses to
       // run on a material that isn't currently awaiting processing, and
       // this also makes the study page's per-stage checklist reappear
@@ -298,7 +308,18 @@ export function useRegenerateMaterial() {
       const { error } = await supabase.functions.invoke("process-material", {
         body: { materialId: input.materialId, text: input.text, title: input.title },
       });
-      if (error) throw error;
+      if (error) {
+        // Without this the material stays "processing" forever and the
+        // study page polls a run that never started.
+        await supabase
+          .from("materials")
+          .update({
+            status: "failed",
+            processing_error: error instanceof Error ? error.message : "Generation could not be started.",
+          })
+          .eq("id", input.materialId);
+        throw error;
+      }
     },
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ["material", input.materialId] });
