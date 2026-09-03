@@ -344,8 +344,15 @@ export function useRegenerateMaterial() {
       qc.invalidateQueries({ queryKey: ["quiz", input.materialId] });
       qc.invalidateQueries({ queryKey: ["catalog"] });
     },
+    onError: (_err, input) => {
+      // Refresh the cached lists so a card for a deleted material stops
+      // being offered for regeneration.
+      qc.invalidateQueries({ queryKey: ["material", input.materialId] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+    },
   });
 }
+
 
 export type MaterialLookup = { id: string; title: string; type: string; courses: { code: string } | null };
 
