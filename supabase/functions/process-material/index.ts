@@ -817,8 +817,8 @@ Deno.serve(async (req: Request) => {
           })
           .eq("id", materialId);
         if (error) throw error;
-      })(),
-      (async () => {
+      })(), deadlineAt, "Summary"),
+      raceDeadline((async () => {
         const cards = await generateFlashcards(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error: delError } = await admin.from("flashcards").delete().eq("material_id", materialId);
         if (delError) throw delError;
