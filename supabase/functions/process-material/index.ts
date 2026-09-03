@@ -802,8 +802,9 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    const deadlineAt = Date.now() + STAGE_BUDGET_MS;
     const [summaryOutcome, flashcardsOutcome, quizOutcome] = await Promise.allSettled([
-      (async () => {
+      raceDeadline((async () => {
         const result = await generateSummary(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error } = await admin
           .from("materials")
