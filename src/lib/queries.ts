@@ -294,6 +294,22 @@ export function useRegenerateMaterial() {
         throw new Error("Sign in to regenerate this material's study tools.");
       }
 
+
+      // The row can be gone by the time someone taps Regenerate — an
+      // admin deleted it, or the card came from a stale/offline-cached
+      // list. Updating a missing row succeeds silently (0 rows), so
+      // without this check the edge function is the first thing to
+      // notice, and it answers with a raw 404 "Material not found."
+      const { data: exists, error: existsError } = await supabase
+        .from("materials")
+        .select("id")
+        .eq("id", input.materialId)
+        .maybeSingle();
+      if (existsError) throw existsError;
+      if (!exists) {
+        throw new Error("This material no longer exists — it may have been deleted. Try uploading it again.");
+      }
+
       // Flip back to "processing" first — the edge function refuses to
       // run on a material that isn't currently awaiting processing, and
       // this also makes the study page's per-stage checklist reappear
@@ -304,6 +320,7 @@ export function useRegenerateMaterial() {
         .update({ status: "processing", processing_error: null })
         .eq("id", input.materialId);
       if (statusError) throw statusError;
+
 
       const { error } = await supabase.functions.invoke("process-material", {
         body: { materialId: input.materialId, text: input.text, title: input.title },
