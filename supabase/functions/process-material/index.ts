@@ -849,7 +849,7 @@ Deno.serve(async (req: Request) => {
         if (insError) throw insError;
         const { error } = await admin.from("materials").update({ quiz_status: "ready", quiz_error: null }).eq("id", materialId);
         if (error) throw error;
-      })(),
+      })(), deadlineAt, "Quiz"),
     ]);
 
     async function markStageFailed(stage: "summary" | "flashcards" | "quiz", outcome: PromiseRejectedResult): Promise<string> {
