@@ -192,6 +192,10 @@ async function callGemini(
           "X-Lovable-AIG-SDK": "learnova-edge-fetch",
         },
         body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: prompt }] }),
+        // Without this a stalled gateway connection hangs until the
+        // platform's own 150s idle timeout kills the entire request.
+        signal: AbortSignal.timeout(AI_CALL_TIMEOUT_MS),
+
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "");
