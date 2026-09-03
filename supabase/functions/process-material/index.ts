@@ -83,6 +83,33 @@ const CHUNK_OVERLAP = 300;
 const MAX_CHUNKS = 16;
 const MAX_CONCURRENT_CHUNK_CALLS = 4;
 
+// ── Time budget ────────────────────────────────────────────────────────
+// The edge runtime kills a request that hasn't responded within 150s with
+// an opaque 504 IDLE_TIMEOUT — the material is then left mid-flight with
+// no stage statuses written and the student sees a blank error. So: cap
+// every individual AI call, and cap the whole generation phase well under
+// the platform limit, so we always get to write real statuses and return.
+const AI_CALL_TIMEOUT_MS = 45_000;
+const STAGE_BUDGET_MS = 110_000;
+
+class DeadlineError extends Error {
+  constructor(label: string) {
+    super(`${label} timed out — the document may be too long. Try again, or upload a shorter file.`);
+  }
+}
+
+function raceDeadline<T>(promise: Promise<T>, deadlineAt: number, label: string): Promise<T> {
+  const remaining = Math.max(1_000, deadlineAt - Date.now());
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new DeadlineError(label)), remaining);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+
 // Abuse guard: at most this many pipeline runs per user in the rolling
 // window below. Tune once real usage patterns are known.
 const RATE_LIMIT_MAX_CALLS = 5;
@@ -165,6 +192,10 @@ async function callGemini(
           "X-Lovable-AIG-SDK": "learnova-edge-fetch",
         },
         body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: prompt }] }),
+        // Without this a stalled gateway connection hangs until the
+        // platform's own 150s idle timeout kills the entire request.
+        signal: AbortSignal.timeout(AI_CALL_TIMEOUT_MS),
+
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "");
@@ -707,8 +738,9 @@ Deno.serve(async (req: Request) => {
         .update({ flashcards_status: "ready", flashcards_error: null, quiz_status: "ready", quiz_error: null })
         .eq("id", materialId);
 
+      const deadlineAt = Date.now() + STAGE_BUDGET_MS;
       const [summaryOutcome, kitOutcome] = await Promise.allSettled([
-        (async () => {
+        raceDeadline((async () => {
           const result = await generateSummary(lovableApiKey, workingText, title, materialType, wasCondensed);
           const { error } = await admin
             .from("materials")
@@ -721,13 +753,14 @@ Deno.serve(async (req: Request) => {
             })
             .eq("id", materialId);
           if (error) throw error;
-        })(),
-        (async () => {
+        })(), deadlineAt, "Summary"),
+        raceDeadline((async () => {
           const kit = await generateStudyKit(kind, lovableApiKey, workingText, title, wasCondensed);
           const { error } = await admin.from("materials").update({ study_kit: kit }).eq("id", materialId);
           if (error) throw error;
-        })(),
+        })(), deadlineAt, "Study kit"),
       ]);
+
 
       const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
 
@@ -769,8 +802,9 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    const deadlineAt = Date.now() + STAGE_BUDGET_MS;
     const [summaryOutcome, flashcardsOutcome, quizOutcome] = await Promise.allSettled([
-      (async () => {
+      raceDeadline((async () => {
         const result = await generateSummary(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error } = await admin
           .from("materials")
@@ -783,8 +817,8 @@ Deno.serve(async (req: Request) => {
           })
           .eq("id", materialId);
         if (error) throw error;
-      })(),
-      (async () => {
+      })(), deadlineAt, "Summary"),
+      raceDeadline((async () => {
         const cards = await generateFlashcards(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error: delError } = await admin.from("flashcards").delete().eq("material_id", materialId);
         if (delError) throw delError;
@@ -797,8 +831,8 @@ Deno.serve(async (req: Request) => {
           .update({ flashcards_status: "ready", flashcards_error: null })
           .eq("id", materialId);
         if (error) throw error;
-      })(),
-      (async () => {
+      })(), deadlineAt, "Flashcards"),
+      raceDeadline((async () => {
         const quiz = await generateQuizStage(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error: delError } = await admin.from("quiz_questions").delete().eq("material_id", materialId);
         if (delError) throw delError;
@@ -815,7 +849,7 @@ Deno.serve(async (req: Request) => {
         if (insError) throw insError;
         const { error } = await admin.from("materials").update({ quiz_status: "ready", quiz_error: null }).eq("id", materialId);
         if (error) throw error;
-      })(),
+      })(), deadlineAt, "Quiz"),
     ]);
 
     async function markStageFailed(stage: "summary" | "flashcards" | "quiz", outcome: PromiseRejectedResult): Promise<string> {
