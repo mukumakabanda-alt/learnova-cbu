@@ -831,8 +831,8 @@ Deno.serve(async (req: Request) => {
           .update({ flashcards_status: "ready", flashcards_error: null })
           .eq("id", materialId);
         if (error) throw error;
-      })(),
-      (async () => {
+      })(), deadlineAt, "Flashcards"),
+      raceDeadline((async () => {
         const quiz = await generateQuizStage(lovableApiKey, workingText, title, materialType, wasCondensed);
         const { error: delError } = await admin.from("quiz_questions").delete().eq("material_id", materialId);
         if (delError) throw delError;
