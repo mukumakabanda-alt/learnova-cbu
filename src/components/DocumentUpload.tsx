@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Upload, Loader2, CheckCircle2, FileWarning, LogIn } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
+import { extractDocumentBatch, extractDocumentText, fileKindLabel, guessMaterialType } from "@/lib/document-text";
+import type { AcademicDocumentModel } from "@/lib/document-model";
 import { ensureFileExtension } from "@/lib/document-files";
 import { useAuth } from "@/hooks/use-auth";
 import { useCourses } from "@/lib/queries";
@@ -170,13 +171,15 @@ async function runBackgroundGeneration(params: {
   courseCode: string | null;
   finalType: MaterialType;
   validYear: number | null;
+  confidence: number;
+  model: AcademicDocumentModel;
 }): Promise<void> {
-  const { materialId, text, title, courseCode, finalType, validYear } = params;
+  const { materialId, text, title, courseCode, finalType, validYear, confidence, model } = params;
   let primaryError: unknown = null;
 
   try {
     const { error } = await supabase.functions.invoke("process-material", {
-      body: { materialId, text, title },
+      body: { materialId, text, title, confidence, documentModel: model },
     });
     if (error) throw error;
     return;
@@ -331,7 +334,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // document-text.ts), during which the file itself, even a large
       // one, now uploads in the background at the same time instead of
       // only starting once reading finished.
-      const [{ text, pages, quality, confidence, confidenceNote }, uploadResult] = await Promise.all([
+      const [{ text, pages, quality, confidence, confidenceNote, model }, uploadResult] = await Promise.all([
         extractDocumentText(file, (p) => {
           setOcrStage(p.stage);
           setOcrProgress(p.progress);
@@ -349,7 +352,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
-      const willGenerate = quality !== "none";
+      const willGenerate = quality !== "none" && confidence >= 0.5;
 
       // Save the material now — status "processing" if there's text worth
       // generating study tools from, "catalog_only" if not. Generation
@@ -372,10 +375,15 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           uploaded_by: user.id,
           tags: [],
           content_confidence: confidence,
+          extraction_confidence: confidence,
           content_confidence_note: confidenceNote ?? null,
+          document_model: model,
+          extraction_metadata: { format: model.format, coverage: model.coverage, signals: model.signals },
           summary: willGenerate
             ? null
-            : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
+            : confidence < 0.5
+              ? "Study tools aren't available for this document yet because Learnova couldn't read it with enough confidence. The original file is still saved and available to preview or download."
+              : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
         })
         .select()
         .single();
@@ -391,6 +399,8 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           courseCode: courseCode ?? null,
           finalType,
           validYear,
+          confidence,
+          model,
         });
       }
 
@@ -489,23 +499,24 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
 
     try {
       const bundleId = crypto.randomUUID();
-      const pageResults: { path: string; text: string; quality: string; confidence: number | null }[] = [];
+      const pageResults: { path: string; text: string; quality: string; confidence: number | null; model: AcademicDocumentModel }[] = [];
+
+      const extractionPromise = extractDocumentBatch(files, (fileIndex, progress) => {
+        setOcrStage(`Reading page ${fileIndex + 1} of ${files.length}…`);
+        setOcrProgress(progress.progress);
+      });
+      const uploadPromises = files.map(async (file, index) => {
+        const originalName = await ensureFileExtension(safeFileName(file.name), file);
+        const path = `${user.id}/${bundleId}-page-${index + 1}-${originalName}`;
+        const result = await supabase.storage.from("materials").upload(path, file);
+        if (result.error) throw result.error;
+        return path;
+      });
+      const [extractions, paths] = await Promise.all([extractionPromise, Promise.all(uploadPromises)]);
 
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setOcrStage(files.length > 1 ? `Reading page ${i + 1} of ${files.length}…` : null);
-        setOcrProgress(0);
-
-        const originalName = await ensureFileExtension(safeFileName(file.name), file);
-        const path = `${user.id}/${bundleId}-page-${i + 1}-${originalName}`;
-
-        const [{ text, quality, confidence }, uploadResult] = await Promise.all([
-          extractDocumentText(file, (p) => setOcrProgress(p.progress)),
-          supabase.storage.from("materials").upload(path, file),
-        ]);
-        if (uploadResult.error) throw uploadResult.error;
-
-        pageResults.push({ path, text, quality, confidence: confidence ?? null });
+        const { text, quality, confidence, model } = extractions[i];
+        pageResults.push({ path: paths[i], text, quality, confidence: confidence ?? null, model });
       }
 
       if (!typeManuallySet) {
@@ -519,7 +530,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
       const combinedText = pageResults.map((p, i) => `[Page ${i + 1}]\n${p.text}`).join("\n\n");
-      const willGenerate = pageResults.some((p) => p.quality !== "none");
+      const willGenerate = pageResults.some((p) => p.quality !== "none") && (confidence ?? 0) >= 0.5;
       const readablePages = pageResults.filter((p) => p.quality !== "none").length;
       const confidenceValues = pageResults.map((p) => p.confidence).filter((c): c is number => c !== null);
       const confidence = confidenceValues.length ? Math.min(...confidenceValues) : null;
@@ -527,6 +538,13 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         readablePages < pageResults.length
           ? `${pageResults.length - readablePages} of ${pageResults.length} pages didn't have any readable text.`
           : null;
+      const bundleModel: AcademicDocumentModel = {
+        ...pageResults[0].model,
+        format: "image-bundle",
+        units: pageResults.flatMap((page, pageIndex) => page.model.units.map((unit) => ({ ...unit, index: pageIndex + 1, label: `Page ${pageIndex + 1}` }))),
+        coverage: readablePages / pageResults.length,
+        extractionConfidence: confidence ?? 0,
+      };
 
       const originalFirstName = await ensureFileExtension(safeFileName(files[0].name), files[0]);
       const title = safeDbText(originalFirstName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
@@ -548,10 +566,15 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           uploaded_by: user.id,
           tags: [],
           content_confidence: confidence,
+          extraction_confidence: confidence,
           content_confidence_note: confidenceNote,
+          document_model: bundleModel,
+          extraction_metadata: { format: "image-bundle", coverage: bundleModel.coverage, signals: bundleModel.signals },
           summary: willGenerate
             ? null
-            : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
+            : (confidence ?? 0) < 0.5
+              ? "Study tools aren't available for this document yet because Learnova couldn't read enough of it confidently. The photos are still saved and available to preview or download."
+              : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
         })
         .select()
         .single();
@@ -567,6 +590,8 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
           courseCode: courseCode ?? null,
           finalType,
           validYear,
+          confidence: confidence ?? 0,
+          model: bundleModel,
         });
       }
 
