@@ -18,6 +18,7 @@
 
 import "@/lib/polyfills"; // must load before pdf.js — see that file for why
 import { loadPdfjs } from "@/lib/pdfjs";
+import { buildAcademicDocumentModel, serializeDocumentForStudy, type AcademicDocumentModel } from "@/lib/document-model";
 
 export type ExtractedDocument = {
   text: string;
@@ -35,6 +36,8 @@ export type ExtractedDocument = {
   confidenceNote?: string;
   /** For zip bundles / partial OCR runs: notes about what was covered. */
   sources?: string[];
+  /** Page/slide/section-aware representation used by generation. */
+  model: AcademicDocumentModel;
 };
 
 export type OcrProgress = { stage: string; progress: number };
@@ -91,6 +94,14 @@ function qualityOf(text: string): ExtractedDocument["quality"] {
   if (len >= 200) return "good";
   if (len >= 20) return "partial";
   return "none";
+}
+
+function finalizeExtraction(input: Omit<ExtractedDocument, "model"> & { format: string; units?: Array<{ label: string; text: string; extraction?: "native" | "ocr" | "mixed" | "structured" | "unknown"; confidence?: number }> }): ExtractedDocument {
+  const model = buildAcademicDocumentModel({
+    format: input.format,
+    units: input.units ?? [{ label: "Document", text: input.text, extraction: "unknown", confidence: input.confidence }],
+  });
+  return { ...input, text: serializeDocumentForStudy(model), confidence: Math.min(input.confidence, model.extractionConfidence), model };
 }
 
 // ── Confidence scoring ──────────────────────────────────────────────────
@@ -248,6 +259,31 @@ async function renderPdfPageToCanvas(pdf: any, pageNumber: number): Promise<HTML
   return canvas;
 }
 
+async function prepareImageForOcr(source: File | Blob): Promise<HTMLCanvasElement | File | Blob> {
+  if (typeof createImageBitmap !== "function") return source;
+  const bitmap = await createImageBitmap(source, { imageOrientation: "from-image" });
+  const longEdge = Math.max(bitmap.width, bitmap.height);
+  const target = longEdge < 1400 ? 1800 : longEdge > 2400 ? 2200 : longEdge;
+  const scale = target / Math.max(1, longEdge);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return source;
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const gray = pixels.data[i] * 0.299 + pixels.data[i + 1] * 0.587 + pixels.data[i + 2] * 0.114;
+    const contrasted = Math.max(0, Math.min(255, (gray - 128) * 1.25 + 128));
+    pixels.data[i] = contrasted;
+    pixels.data[i + 1] = contrasted;
+    pixels.data[i + 2] = contrasted;
+  }
+  context.putImageData(pixels, 0, 0);
+  return canvas;
+}
+
 async function loadMammoth() {
   const mod: any = await import("mammoth");
   return mod.default ?? mod;
@@ -291,7 +327,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
     const text = cleanWhitespace(nativePages.join("\n\n"));
     const quality = qualityOf(text);
     const { confidence, note } = computeConfidence({ quality, totalPages, ocrPages: 0, uncoveredPages: 0 });
-    return { text, pages: totalPages, quality, confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text, pages: totalPages, quality, confidence, confidenceNote: note ?? undefined, format: "pdf", units: nativePages.map((pageText, index) => ({ label: `Page ${index + 1}`, text: pageText, extraction: "native", confidence: 0.96 })) });
   }
 
   if (ctx.budget.remaining <= 0) {
@@ -301,14 +337,16 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
     const text = cleanWhitespace(nativePages.join("\n\n"));
     const quality = qualityOf(text);
     const { confidence, note } = computeConfidence({ quality, totalPages, ocrPages: 0, uncoveredPages: pagesNeedingOcr });
-    return {
+    return finalizeExtraction({
       text,
       pages: totalPages,
       quality,
       confidence,
       confidenceNote: note ?? undefined,
       sources: [`OCR budget already used up — ${pagesNeedingOcr} page(s) may be missing text`],
-    };
+      format: "pdf",
+      units: nativePages.map((pageText, index) => ({ label: `Page ${index + 1}`, text: pageText, extraction: "native", confidence: pageText.length >= PAGE_TEXT_MIN_CHARS ? 0.9 : 0.05 })),
+    });
   }
 
   const worker = await getOcrWorker(ctx);
@@ -344,62 +382,100 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
   if (ocredCount > 0) sources.push(`OCR read ${ocredCount} of ${totalPages} page${totalPages === 1 ? "" : "s"}`);
   if (uncoveredPages > 0) sources.push(`${uncoveredPages} page${uncoveredPages === 1 ? "" : "s"} couldn't be read`);
 
-  return {
+  return finalizeExtraction({
     text,
     pages: totalPages,
     quality,
     confidence,
     confidenceNote: note ?? undefined,
     sources: sources.length ? sources : undefined,
-  };
+    format: "pdf",
+    units: nativePages.map((pageText, index) => ({ label: `Page ${index + 1}`, text: pageText, extraction: needsOcr[index] ? "ocr" : "native", confidence: pageText.length >= PAGE_TEXT_MIN_CHARS ? (needsOcr[index] ? 0.72 : 0.96) : 0.05 })),
+  });
 }
 
 async function extractImage(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocument> {
   if (ctx.budget.remaining <= 0) {
     const { confidence, note } = computeConfidence({ quality: "none", totalPages: 1, ocrPages: 0, uncoveredPages: 1 });
-    return { text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined, format: "image" });
   }
   ctx.label = "the image";
   ctx.onProgress?.({ stage: "Reading the image…", progress: 0 });
   const worker = await getOcrWorker(ctx);
   try {
-    const { data } = (await withTimeout(worker.recognize(file) as Promise<unknown>, OCR_PAGE_TIMEOUT_MS, "Reading the image")) as { data?: { text?: string } };
+    const prepared = await prepareImageForOcr(file);
+    const { data } = (await withTimeout(worker.recognize(prepared) as Promise<unknown>, OCR_PAGE_TIMEOUT_MS, "Reading the image")) as { data?: { text?: string; confidence?: number } };
     ctx.budget.remaining--;
     const text = cleanWhitespace(data?.text ?? "");
     const quality = qualityOf(text);
-    const { confidence, note } = computeConfidence({ quality, totalPages: 1, ocrPages: 1, uncoveredPages: 0 });
-    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+    const base = computeConfidence({ quality, totalPages: 1, ocrPages: 1, uncoveredPages: 0 });
+    const confidence = Math.min(base.confidence, typeof data?.confidence === "number" ? data.confidence / 100 : base.confidence);
+    return finalizeExtraction({ text, pages: null, quality, confidence, confidenceNote: base.note ?? undefined, format: "image", units: [{ label: "Image", text, extraction: "ocr", confidence }] });
   } catch {
     ctx.budget.remaining--;
     const { confidence, note } = computeConfidence({ quality: "none", totalPages: 1, ocrPages: 0, uncoveredPages: 1 });
-    return { text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text: "", pages: null, quality: "none", confidence, confidenceNote: note ?? undefined, format: "image" });
   }
 }
 
 async function extractDocxBuffer(buffer: ArrayBuffer): Promise<string> {
   const mammoth = await loadMammoth();
-  const { value } = await mammoth.extractRawText({ arrayBuffer: buffer });
-  return cleanWhitespace(value ?? "");
+  const { value } = await mammoth.convertToHtml({ arrayBuffer: buffer });
+  const doc = new DOMParser().parseFromString(value ?? "", "text/html");
+  const lines = Array.from(doc.body.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,tr"))
+    .map((node) => {
+      const text = cleanWhitespace(node.textContent ?? "");
+      if (!text) return "";
+      if (/^H[1-6]$/.test(node.tagName)) return `# ${text}`;
+      if (node.tagName === "LI") return `- ${text}`;
+      if (node.tagName === "TR") return `| ${Array.from(node.children).map((cell) => cleanWhitespace(cell.textContent ?? "")).join(" | ")} |`;
+      return text;
+    })
+    .filter(Boolean);
+  return lines.join("\n");
 }
 
-async function extractPptxBuffer(buffer: ArrayBuffer): Promise<string> {
+async function extractPptxBuffer(buffer: ArrayBuffer, ctx?: OcrCtx): Promise<string> {
   const JSZip = await loadJSZip();
   const zip = await JSZip.loadAsync(buffer);
   const slidePaths = Object.keys(zip.files)
     .filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
     .sort((a, b) => Number(a.match(/(\d+)/)?.[1] ?? 0) - Number(b.match(/(\d+)/)?.[1] ?? 0));
-  const notesPaths = Object.keys(zip.files).filter((p) => /^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(p));
-
   const parser = new DOMParser();
   const parts: string[] = [];
-  for (const path of [...slidePaths, ...notesPaths]) {
+  for (let slideIndex = 0; slideIndex < slidePaths.length; slideIndex++) {
+    const path = slidePaths[slideIndex];
     const xml = await zip.files[path].async("string");
     const doc = parser.parseFromString(xml, "application/xml");
-    const nodes = Array.from(doc.getElementsByTagName("a:t"));
-    const slideText = nodes.map((n) => n.textContent ?? "").join(" ").trim();
-    if (slideText) parts.push(slideText);
+    const paragraphs = Array.from(doc.getElementsByTagName("a:p"))
+      .map((paragraph) => Array.from(paragraph.getElementsByTagName("a:t")).map((node) => node.textContent ?? "").join("").trim())
+      .filter(Boolean);
+    const notesPath = `ppt/notesSlides/notesSlide${slideIndex + 1}.xml`;
+    const notes = zip.files[notesPath]
+      ? Array.from(parser.parseFromString(await zip.files[notesPath].async("string"), "application/xml").getElementsByTagName("a:t")).map((node) => node.textContent ?? "").join(" ").trim()
+      : "";
+    const mediaText: string[] = [];
+    if (ctx && paragraphs.join(" ").length < 80) {
+      const relPath = `ppt/slides/_rels/slide${slideIndex + 1}.xml.rels`;
+      if (zip.files[relPath]) {
+        const relDoc = parser.parseFromString(await zip.files[relPath].async("string"), "application/xml");
+        for (const rel of Array.from(relDoc.getElementsByTagName("Relationship"))) {
+          const target = rel.getAttribute("Target") ?? "";
+          if (!target.includes("media/")) continue;
+          const mediaPath = `ppt/${target.replace(/^\.\.\//, "")}`;
+          const media = zip.files[mediaPath];
+          if (!media || ctx.budget.remaining <= 0) continue;
+          const extracted = await extractImage(new Blob([await media.async("arraybuffer")]), ctx);
+          if (extracted.text) mediaText.push(extracted.text);
+        }
+      }
+    }
+    const slideLines = [`=== Slide ${slideIndex + 1} ===`, ...paragraphs.map((text, index) => `${index === 0 ? "Title" : "Bullet"}: ${text}`)];
+    if (notes) slideLines.push(`Speaker notes: ${notes}`);
+    if (mediaText.length) slideLines.push(`Visual text: ${mediaText.join(" ")}`);
+    parts.push(slideLines.join("\n"));
   }
-  return cleanWhitespace(parts.join("\n\n"));
+  return parts.join("\n\n");
 }
 
 async function extractZip(file: File | Blob, ctx: OcrCtx, depth = 0): Promise<ExtractedDocument> {
@@ -426,7 +502,7 @@ async function extractZip(file: File | Blob, ctx: OcrCtx, depth = 0): Promise<Ex
       } else if (extension === "docx") {
         innerText = await extractDocxBuffer(await entry.async("arraybuffer"));
       } else if (extension === "pptx") {
-        innerText = await extractPptxBuffer(await entry.async("arraybuffer"));
+        innerText = await extractPptxBuffer(await entry.async("arraybuffer"), ctx);
       } else if (["txt", "md", "markdown", "csv", "json"].includes(extension)) {
         innerText = cleanWhitespace(await entry.async("string"));
       } else if (["doc", "ppt", "xls"].includes(extension)) {
@@ -452,7 +528,7 @@ async function extractZip(file: File | Blob, ctx: OcrCtx, depth = 0): Promise<Ex
   const text = cleanWhitespace(parts.join("\n\n"));
   const quality = qualityOf(text);
   const { confidence, note } = simpleConfidence(quality);
-  return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined, sources };
+  return finalizeExtraction({ text, pages: null, quality, confidence, confidenceNote: note ?? undefined, sources, format: "zip" });
 }
 
 async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<ExtractedDocument> {
@@ -469,13 +545,14 @@ async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<Extrac
     const text = await extractDocxBuffer(await file.arrayBuffer());
     const quality = qualityOf(text);
     const { confidence, note } = simpleConfidence(quality);
-    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text, pages: null, quality, confidence, confidenceNote: note ?? undefined, format: "docx" });
   }
   if (extension === "pptx" || mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
-    const text = await extractPptxBuffer(await file.arrayBuffer());
+    const text = await extractPptxBuffer(await file.arrayBuffer(), ctx);
     const quality = qualityOf(text);
     const { confidence, note } = simpleConfidence(quality);
-    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+    const units = text.split(/(?==== Slide \d+ ===)/).filter(Boolean).map((slide, index) => ({ label: `Slide ${index + 1}`, text: slide.replace(/^=== Slide \d+ ===\s*/, ""), extraction: "structured" as const, confidence }));
+    return finalizeExtraction({ text, pages: units.length, quality, confidence, confidenceNote: note ?? undefined, format: "pptx", units });
   }
   if (extension === "zip" || mime === "application/zip" || mime === "application/x-zip-compressed") {
     return await extractZip(file, ctx);
@@ -484,25 +561,25 @@ async function extractDocumentTextInner(file: File, ctx: OcrCtx): Promise<Extrac
     const text = cleanWhitespace(await file.text());
     const quality = qualityOf(text);
     const { confidence, note } = simpleConfidence(quality);
-    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text, pages: null, quality, confidence, confidenceNote: note ?? undefined, format: extension || "text" });
   }
   if (["doc", "ppt", "xls"].includes(extension)) {
     const text = scrapePrintableStrings(await file.arrayBuffer());
     const quality = qualityOf(text);
     const { confidence, note } = simpleConfidence(quality);
-    return { text, pages: null, quality, confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text, pages: null, quality, confidence, confidenceNote: note ?? undefined, format: extension });
   }
 
   const asText = cleanWhitespace(await file.text().catch(() => ""));
   const asTextQuality = qualityOf(asText);
   if (asTextQuality !== "none") {
     const { confidence, note } = simpleConfidence(asTextQuality);
-    return { text: asText, pages: null, quality: asTextQuality, confidence, confidenceNote: note ?? undefined };
+    return finalizeExtraction({ text: asText, pages: null, quality: asTextQuality, confidence, confidenceNote: note ?? undefined, format: extension || "unknown" });
   }
   const scraped = scrapePrintableStrings(await file.arrayBuffer());
   const scrapedQuality = qualityOf(scraped);
   const { confidence, note } = simpleConfidence(scrapedQuality);
-  return { text: scraped, pages: null, quality: scrapedQuality, confidence, confidenceNote: note ?? undefined };
+  return finalizeExtraction({ text: scraped, pages: null, quality: scrapedQuality, confidence, confidenceNote: note ?? undefined, format: extension || "unknown" });
 }
 
 /**
@@ -523,7 +600,22 @@ export async function extractDocumentText(file: File, onProgress?: (p: OcrProgre
     return await extractDocumentTextInner(file, ctx);
   } catch (err) {
     console.error("Text extraction failed for", file.name, err);
-    return { text: "", pages: null, quality: "none", confidence: 0, confidenceNote: "We couldn't read this file." };
+    return finalizeExtraction({ text: "", pages: null, quality: "none", confidence: 0, confidenceNote: "We couldn't read this file.", format: extOf(file.name) || "unknown" });
+  } finally {
+    await terminateOcrWorker(ctx);
+  }
+}
+
+/** Extract several related files through one OCR worker and one shared budget. */
+export async function extractDocumentBatch(files: File[], onProgress?: (fileIndex: number, p: OcrProgress) => void): Promise<ExtractedDocument[]> {
+  const ctx = newOcrCtx();
+  try {
+    const results: ExtractedDocument[] = [];
+    for (let index = 0; index < files.length; index++) {
+      ctx.onProgress = (progress) => onProgress?.(index, progress);
+      results.push(await extractDocumentTextInner(files[index], ctx));
+    }
+    return results;
   } finally {
     await terminateOcrWorker(ctx);
   }
