@@ -198,8 +198,12 @@ export type Database = {
           content_year: number | null
           course_code: string | null
           created_at: string
+          current_study_pack_id: string | null
+          document_model: Json | null
           download_count: number
           extra_file_paths: string[]
+          extraction_confidence: number | null
+          extraction_metadata: Json | null
           file_path: string | null
           flashcards_error: string | null
           flashcards_status: string
@@ -213,6 +217,7 @@ export type Database = {
           source: string
           status: Database["public"]["Enums"]["material_status"]
           study_kit: Json | null
+          study_pack_confidence: number | null
           summary: string | null
           summary_error: string | null
           summary_status: string
@@ -228,8 +233,12 @@ export type Database = {
           content_year?: number | null
           course_code?: string | null
           created_at?: string
+          current_study_pack_id?: string | null
+          document_model?: Json | null
           download_count?: number
           extra_file_paths?: string[]
+          extraction_confidence?: number | null
+          extraction_metadata?: Json | null
           file_path?: string | null
           flashcards_error?: string | null
           flashcards_status?: string
@@ -243,6 +252,7 @@ export type Database = {
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           study_kit?: Json | null
+          study_pack_confidence?: number | null
           summary?: string | null
           summary_error?: string | null
           summary_status?: string
@@ -258,8 +268,12 @@ export type Database = {
           content_year?: number | null
           course_code?: string | null
           created_at?: string
+          current_study_pack_id?: string | null
+          document_model?: Json | null
           download_count?: number
           extra_file_paths?: string[]
+          extraction_confidence?: number | null
+          extraction_metadata?: Json | null
           file_path?: string | null
           flashcards_error?: string | null
           flashcards_status?: string
@@ -273,6 +287,7 @@ export type Database = {
           source?: string
           status?: Database["public"]["Enums"]["material_status"]
           study_kit?: Json | null
+          study_pack_confidence?: number | null
           summary?: string | null
           summary_error?: string | null
           summary_status?: string
@@ -289,6 +304,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "courses"
             referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "materials_current_study_pack_id_fkey"
+            columns: ["current_study_pack_id"]
+            isOneToOne: false
+            referencedRelation: "study_pack_versions"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "materials_uploaded_by_profile_fkey"
@@ -502,6 +524,71 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      study_pack_versions: {
+        Row: {
+          created_at: string
+          document_model: Json | null
+          document_type: string
+          extraction_confidence: number | null
+          flashcards: Json
+          generated_by: string | null
+          generation_source: string
+          grounding_confidence: number | null
+          id: string
+          is_current: boolean
+          material_id: string
+          quiz: Json
+          study_kit: Json | null
+          summary: string | null
+          tags: string[]
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          document_model?: Json | null
+          document_type: string
+          extraction_confidence?: number | null
+          flashcards?: Json
+          generated_by?: string | null
+          generation_source?: string
+          grounding_confidence?: number | null
+          id?: string
+          is_current?: boolean
+          material_id: string
+          quiz?: Json
+          study_kit?: Json | null
+          summary?: string | null
+          tags?: string[]
+          version: number
+        }
+        Update: {
+          created_at?: string
+          document_model?: Json | null
+          document_type?: string
+          extraction_confidence?: number | null
+          flashcards?: Json
+          generated_by?: string | null
+          generation_source?: string
+          grounding_confidence?: number | null
+          id?: string
+          is_current?: boolean
+          material_id?: string
+          quiz?: Json
+          study_kit?: Json | null
+          summary?: string | null
+          tags?: string[]
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "study_pack_versions_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "materials"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
