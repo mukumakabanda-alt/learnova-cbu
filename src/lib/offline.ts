@@ -26,6 +26,15 @@ export type OfflineBundle = {
   material: MaterialWithCourse;
   flashcards: FlashcardRow[];
   quiz: QuizRow[];
+  /** Complete generated pack snapshot, including type-specific tools and structured extraction evidence. */
+  studyPack?: {
+    summary: string | null;
+    tags: string[];
+    studyKit: Database["public"]["Tables"]["materials"]["Row"]["study_kit"];
+    documentModel: Database["public"]["Tables"]["materials"]["Row"]["document_model"];
+    extractionConfidence: number | null;
+    studyPackConfidence: number | null;
+  };
   savedAt: string;
   /** Updated every time this material is actually opened while saved offline — powers the Library's "recently opened" ordering. */
   lastOpenedAt?: string;
@@ -38,7 +47,7 @@ export type OfflineBundle = {
 };
 
 const DB_NAME = "learnova-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "materials";
 
 function openDb(): Promise<IDBDatabase> {
@@ -114,6 +123,14 @@ export async function saveMaterialOffline(bundle: {
     fileMime: bundle.fileMime ?? existing?.fileMime,
     extraFileBlobs: bundle.extraFileBlobs ?? existing?.extraFileBlobs,
     extraFileMimes: bundle.extraFileMimes ?? existing?.extraFileMimes,
+    studyPack: {
+      summary: bundle.material.summary,
+      tags: bundle.material.tags,
+      studyKit: bundle.material.study_kit,
+      documentModel: bundle.material.document_model,
+      extractionConfidence: bundle.material.extraction_confidence,
+      studyPackConfidence: bundle.material.study_pack_confidence,
+    },
   };
   await withStore("readwrite", (store) => store.put(full));
   notify();

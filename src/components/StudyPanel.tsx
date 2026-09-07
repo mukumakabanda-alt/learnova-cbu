@@ -74,7 +74,7 @@ export function StudyPanel({
   offlineBundle?: { flashcards: FlashcardRow[]; quiz: QuizRow[] } | null;
 }) {
   const [tab, setTab] = useState<Tab>("summary");
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const bumpStreak = useBumpStreak();
   const isOnline = useOnlineStatus();
   const incrementDownload = useIncrementDownload();
@@ -310,12 +310,12 @@ export function StudyPanel({
       if (!fetched) throw new Error("Couldn't re-read the saved file.");
       const filename = originalFileName(material.file_path, material.title);
       const file = new File([fetched.blob], filename, { type: fetched.mime });
-      const { text, quality } = await extractDocumentText(file);
-      if (quality === "none" || !text.trim()) {
-        toast.error("Couldn't find readable text in this file to regenerate from.");
+      const { text, quality, confidence, model } = await extractDocumentText(file);
+      if (quality === "none" || !text.trim() || confidence < 0.5) {
+        toast.error("Study tools aren't available because this file couldn't be read with enough confidence.");
         return;
       }
-      await regenerateMutation.mutateAsync({ materialId: material.id, text, title: material.title });
+      await regenerateMutation.mutateAsync({ materialId: material.id, text, title: material.title, confidence, documentModel: model });
       toast.success("Regenerating — this page updates itself as it finishes.");
     } catch (e) {
       toast.error(e instanceof Error && e.message ? e.message : "Couldn't restart generation right now — try again in a moment.");
@@ -333,7 +333,7 @@ export function StudyPanel({
   const anyStageFailed = summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
   const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
   const isLocalFallback = material.generation_source === "local-fallback";
-  const canRegenerate = !!material.file_path;
+  const canRegenerate = !!material.file_path && isAdmin;
   const kind = materialKindOf(material.type);
   const TABS = kind === "past-paper" ? PAST_PAPER_TABS : kind === "outline" ? OUTLINE_TABS : kind === "assignment" ? ASSIGNMENT_TABS : STANDARD_TABS;
   const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
@@ -418,17 +418,7 @@ export function StudyPanel({
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-8 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <div className="text-sm font-semibold text-foreground">Generating your study tools…</div>
-          <div className="w-full space-y-1.5 text-left">
-            <StageRow label="Summary" status={summaryStatus} error={material.summary_error} />
-            {kind === "standard" ? (
-              <>
-                <StageRow label="Flashcards" status={flashcardsStatus} error={material.flashcards_error} />
-                <StageRow label="Quiz" status={quizStatus} error={material.quiz_error} />
-              </>
-            ) : (
-              <StageRow label={kitLabel} status={material.study_kit ? "ready" : "pending"} error={null} />
-            )}
-          </div>
+          <div className="text-xs text-muted-foreground">Reading, organizing, and grounding the document…</div>
           <p className="max-w-xs text-xs text-muted-foreground">
             This page updates itself as each part finishes — no need to refresh. The file above is already yours to view or download in the meantime.
           </p>

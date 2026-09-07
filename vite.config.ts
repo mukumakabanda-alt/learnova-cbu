@@ -34,6 +34,16 @@ export default defineConfig({
               },
             },
             {
+              urlPattern: ({ url }) =>
+                /tesseract|tessdata|traineddata|\.wasm(?:\?|$)/i.test(url.href),
+              handler: "CacheFirst",
+              options: {
+                cacheName: "learnova-ocr-assets",
+                expiration: { maxEntries: 24, maxAgeSeconds: 365 * 24 * 60 * 60 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
               urlPattern: ({ request, url }) =>
                 url.origin === self.location.origin &&
                 (url.pathname.startsWith("/assets/") ||

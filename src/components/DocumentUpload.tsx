@@ -530,10 +530,10 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const year = contentYear.trim() ? Number(contentYear.trim()) : null;
       const validYear = year && Number.isFinite(year) ? year : null;
       const combinedText = pageResults.map((p, i) => `[Page ${i + 1}]\n${p.text}`).join("\n\n");
-      const willGenerate = pageResults.some((p) => p.quality !== "none") && (confidence ?? 0) >= 0.5;
       const readablePages = pageResults.filter((p) => p.quality !== "none").length;
       const confidenceValues = pageResults.map((p) => p.confidence).filter((c): c is number => c !== null);
       const confidence = confidenceValues.length ? Math.min(...confidenceValues) : null;
+      const willGenerate = pageResults.some((p) => p.quality !== "none") && (confidence ?? 0) >= 0.5;
       const confidenceNote =
         readablePages < pageResults.length
           ? `${pageResults.length - readablePages} of ${pageResults.length} pages didn't have any readable text.`
