@@ -64,7 +64,8 @@ const corsHeaders = {
 // Check Cloud → AI in the Lovable editor for the current recommended
 // model id if this one ever stops resolving — the gateway's model list
 // does shift over time.
-const MODEL = "google/gemini-2.5-flash";
+const MODEL = "google/gemini-3.7-flash";
+const MIN_EXTRACTION_CONFIDENCE = 0.5;
 
 // Text at or under this size is sent to the model as-is — no chunking,
 // no condensing. This is deliberately generous: gemini-2.5-flash's real
@@ -121,6 +122,18 @@ const INJECTION_GUARD =
 type StageStatus = "pending" | "ready" | "failed";
 type FlashcardOut = { question: string; answer: string };
 type QuizOut = { question: string; options: string[]; correct_index: number; explanation: string };
+type DocumentModel = {
+  version?: number;
+  format?: string;
+  documentType?: string;
+  units?: Array<{ label?: string; text?: string; confidence?: number; blocks?: Array<{ kind?: string; text?: string }> }>;
+  headings?: string[];
+  formulas?: string[];
+  questions?: string[];
+  tables?: string[];
+  extractionConfidence?: number;
+  coverage?: number;
+};
 
 function safeDbText(value: unknown, fallback = ""): string {
   return String(value ?? fallback)
@@ -129,6 +142,54 @@ function safeDbText(value: unknown, fallback = ""): string {
     .replace(/[\uD800-\uDFFF]/g, "")
     .replace(/[ \t]+/g, " ")
     .trim();
+}
+
+function safeConfidence(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0;
+}
+
+function studyEvidence(model: DocumentModel | null): string {
+  if (!model) return "";
+  const unitLabels = (model.units ?? []).slice(0, 40).map((unit) => safeDbText(unit.label)).filter(Boolean);
+  return `\nDOCUMENT EVIDENCE MAP:\n- Format: ${safeDbText(model.format, "unknown")}\n- Sections/pages: ${unitLabels.join(", ") || "not labelled"}\n- Headings: ${(model.headings ?? []).slice(0, 30).map((v) => safeDbText(v)).filter(Boolean).join(" | ") || "none detected"}\n- Formula lines: ${(model.formulas ?? []).slice(0, 20).map((v) => safeDbText(v)).filter(Boolean).join(" | ") || "none detected"}\n- Question lines: ${(model.questions ?? []).slice(0, 30).map((v) => safeDbText(v)).filter(Boolean).join(" | ") || "none detected"}\nUse this map to preserve the document's actual structure. Never ask what kind of document it is, describe the file format, or invent generic material not supported by the TEXT.`;
+}
+
+async function publishStudyPack(
+  admin: ReturnType<typeof createClient>,
+  materialId: string,
+  callerId: string,
+  materialType: string,
+  documentModel: DocumentModel | null,
+  extractionConfidence: number,
+  groundingConfidence: number,
+): Promise<void> {
+  const [{ data: material }, { data: cards }, { data: quiz }, { data: latest }] = await Promise.all([
+    admin.from("materials").select("summary,tags,study_kit").eq("id", materialId).single(),
+    admin.from("flashcards").select("question,answer,position").eq("material_id", materialId).order("position"),
+    admin.from("quiz_questions").select("question,options,correct_index,explanation,position").eq("material_id", materialId).order("position"),
+    admin.from("study_pack_versions").select("version").eq("material_id", materialId).order("version", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (!material) return;
+  await admin.from("study_pack_versions").update({ is_current: false }).eq("material_id", materialId).eq("is_current", true);
+  const { data: pack, error } = await admin.from("study_pack_versions").insert({
+    material_id: materialId,
+    version: (latest?.version ?? 0) + 1,
+    is_current: true,
+    document_type: materialType,
+    extraction_confidence: extractionConfidence,
+    grounding_confidence: groundingConfidence,
+    summary: material.summary,
+    tags: material.tags ?? [],
+    flashcards: cards ?? [],
+    quiz: quiz ?? [],
+    study_kit: material.study_kit,
+    document_model: documentModel,
+    generation_source: "ai",
+    generated_by: callerId,
+  }).select("id").single();
+  if (error) throw error;
+  await admin.from("materials").update({ current_study_pack_id: pack.id, study_pack_confidence: groundingConfidence }).eq("id", materialId);
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -662,9 +723,20 @@ Deno.serve(async (req: Request) => {
     materialId = body.materialId;
     const text: string = safeDbText(body.text ?? "");
     const title: string = safeDbText(body.title ?? "this document", "this document");
+    const documentModel: DocumentModel | null = body.documentModel && typeof body.documentModel === "object" ? body.documentModel : null;
+    const extractionConfidence = safeConfidence(body.confidence ?? documentModel?.extractionConfidence);
 
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
+    }
+    if (extractionConfidence < MIN_EXTRACTION_CONFIDENCE) {
+      await admin.from("materials").update({
+        status: "catalog_only",
+        extraction_confidence: extractionConfidence,
+        document_model: documentModel,
+        processing_error: "Study tools aren't available because this document couldn't be read with enough confidence.",
+      }).eq("id", materialId);
+      return jsonResponse({ error: "Study tools aren't available because document confidence is below 50%." }, 422);
     }
 
     if (!lovableApiKey) {
@@ -675,7 +747,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: material, error: materialError } = await admin
       .from("materials")
-      .select("id, uploaded_by, status, type, content_year")
+      .select("id, uploaded_by, status, type, content_year, current_study_pack_id, generation_source")
       .eq("id", materialId)
       .maybeSingle();
     if (materialError) throw materialError;
@@ -692,6 +764,9 @@ Deno.serve(async (req: Request) => {
 
     if (material.uploaded_by !== callerId && !callerIsAdmin) {
       return jsonResponse({ error: "You don't have permission to process this material." }, 403);
+    }
+    if ((material.current_study_pack_id || material.generation_source) && !callerIsAdmin) {
+      return jsonResponse({ error: "Only an admin can replace a published study pack." }, 403);
     }
     if (material.status !== "processing") {
       return jsonResponse({ error: "This material isn't awaiting processing." }, 409);
@@ -716,7 +791,8 @@ Deno.serve(async (req: Request) => {
 
     const materialType = material.type ?? "Notes";
     const kind = materialKind(materialType);
-    const { text: workingText, wasCondensed, coveragePct } = await buildWorkingText(lovableApiKey, text);
+    const groundedText = `${text}${studyEvidence(documentModel)}`;
+    const { text: workingText, wasCondensed, coveragePct } = await buildWorkingText(lovableApiKey, groundedText);
     const confidenceNote =
       wasCondensed && coveragePct < 100
         ? `This document was long enough that only about ${coveragePct}% of it was used to generate study tools.`
@@ -737,6 +813,10 @@ Deno.serve(async (req: Request) => {
         .from("materials")
         .update({ flashcards_status: "ready", flashcards_error: null, quiz_status: "ready", quiz_error: null })
         .eq("id", materialId);
+
+      const successfulStages = Number(summaryOutcome.status === "fulfilled") + Number(kitOutcome.status === "fulfilled");
+      const groundingConfidence = Math.round(Math.min(extractionConfidence, 0.65 + successfulStages * 0.15) * 100) / 100;
+      if (anySucceeded) await publishStudyPack(admin, materialId, callerId, materialType, documentModel, extractionConfidence, groundingConfidence);
 
       const deadlineAt = Date.now() + STAGE_BUDGET_MS;
       const [summaryOutcome, kitOutcome] = await Promise.allSettled([
@@ -880,6 +960,10 @@ Deno.serve(async (req: Request) => {
         updated_at: new Date().toISOString(),
       })
       .eq("id", materialId);
+
+    const successfulStages = [summaryOutcome, flashcardsOutcome, quizOutcome].filter((outcome) => outcome.status === "fulfilled").length;
+    const groundingConfidence = Math.round(Math.min(extractionConfidence, 0.55 + successfulStages * 0.13) * 100) / 100;
+    if (anySucceeded) await publishStudyPack(admin, materialId, callerId, materialType, documentModel, extractionConfidence, groundingConfidence);
 
     return jsonResponse({
       ok: anySucceeded,
