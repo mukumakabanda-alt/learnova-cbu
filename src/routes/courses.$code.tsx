@@ -20,12 +20,12 @@ export const Route = createFileRoute("/courses/$code")({
   component: CoursePage,
 });
 
-function materialStatusLabel(status: string): string {
+function materialStatusLabel(status: string, type: string): string {
   switch (status) {
     case "processing":
       return "Generating study tools…";
     case "ready":
-      return "Summary, flashcards & quiz ready";
+      return ["Past Paper", "Outline", "Assignment"].includes(type) ? "Study tools ready" : "Summary, flashcards & quiz ready";
     case "failed":
       return "Processing failed — try re-uploading";
     case "catalog_only":
@@ -100,7 +100,7 @@ function MaterialRowCard({
             )}
           </div>
           <div className="mt-1 truncate text-sm font-semibold text-foreground">{m.title}</div>
-          <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status)}</div>
+          <div className="text-xs text-muted-foreground">{materialStatusLabel(m.status, m.type)}</div>
         </div>
       </Link>
       <button
@@ -172,6 +172,11 @@ function CoursePage() {
   }
 
   const courseInfo = { title: course.title, code: course.code, programme_code: course.programme_code ?? "" };
+  const materialGroups = (materials ?? []).reduce<Record<string, MaterialRow[]>>((groups, material) => {
+    (groups[material.type] ??= []).push(material);
+    return groups;
+  }, {});
+  const groupOrder = ["Slides", "Notes", "Past Paper", "Outline", "Assignment", "Summary"];
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -201,16 +206,19 @@ function CoursePage() {
                 Nothing uploaded for this course yet — be the first.
               </div>
             )}
-            {(materials ?? []).map((m) => (
-              <MaterialRowCard
-                key={m.id}
-                m={m}
-                course={courseInfo}
-                isSaved={savedIds.has(m.id)}
-                isPending={pendingSaveIds.has(m.id)}
-                onToggleSaved={() => handleToggleSaved(m.id, !savedIds.has(m.id))}
-              />
-            ))}
+            {Object.entries(materialGroups)
+              .sort(([a], [b]) => (groupOrder.indexOf(a) < 0 ? 99 : groupOrder.indexOf(a)) - (groupOrder.indexOf(b) < 0 ? 99 : groupOrder.indexOf(b)))
+              .map(([type, items]) => (
+                <section key={type} aria-labelledby={`materials-${type}`} className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-border pb-2">
+                    <h3 id={`materials-${type}`} className="text-sm font-semibold text-foreground">{type}</h3>
+                    <span className="text-xs text-muted-foreground">{items.length}</span>
+                  </div>
+                  {items.map((m) => (
+                    <MaterialRowCard key={m.id} m={m} course={courseInfo} isSaved={savedIds.has(m.id)} isPending={pendingSaveIds.has(m.id)} onToggleSaved={() => handleToggleSaved(m.id, !savedIds.has(m.id))} />
+                  ))}
+                </section>
+              ))}
           </div>
 
           <h2 className="mt-10 font-display text-2xl text-foreground">Course outline</h2>

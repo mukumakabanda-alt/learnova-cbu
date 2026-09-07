@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 
@@ -282,8 +282,9 @@ export function useMaterial(id: string) {
 // uploaded file is the source of truth.
 export function useRegenerateMaterial() {
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
   return useMutation({
-    mutationFn: async (input: { materialId: string; text: string; title: string }) => {
+    mutationFn: async (input: { materialId: string; text: string; title: string; confidence: number; documentModel: Json }) => {
       // The edge function runs as the caller and rejects anonymous
       // requests with 401 "Sign in required." Check first, so a
       // signed-out visitor gets a plain explanation instead of a raw
@@ -292,6 +293,9 @@ export function useRegenerateMaterial() {
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session) {
         throw new Error("Sign in to regenerate this material's study tools.");
+      }
+      if (!isAdmin) {
+        throw new Error("Only an admin can replace a published study pack.");
       }
 
 
@@ -323,7 +327,7 @@ export function useRegenerateMaterial() {
 
 
       const { error } = await supabase.functions.invoke("process-material", {
-        body: { materialId: input.materialId, text: input.text, title: input.title },
+        body: { materialId: input.materialId, text: input.text, title: input.title, confidence: input.confidence, documentModel: input.documentModel },
       });
       if (error) {
         // Without this the material stays "processing" forever and the
