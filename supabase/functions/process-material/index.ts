@@ -814,10 +814,6 @@ Deno.serve(async (req: Request) => {
         .update({ flashcards_status: "ready", flashcards_error: null, quiz_status: "ready", quiz_error: null })
         .eq("id", materialId);
 
-      const successfulStages = Number(summaryOutcome.status === "fulfilled") + Number(kitOutcome.status === "fulfilled");
-      const groundingConfidence = Math.round(Math.min(extractionConfidence, 0.65 + successfulStages * 0.15) * 100) / 100;
-      if (anySucceeded) await publishStudyPack(admin, materialId, callerId, materialType, documentModel, extractionConfidence, groundingConfidence);
-
       const deadlineAt = Date.now() + STAGE_BUDGET_MS;
       const [summaryOutcome, kitOutcome] = await Promise.allSettled([
         raceDeadline((async () => {
@@ -871,6 +867,10 @@ Deno.serve(async (req: Request) => {
           updated_at: new Date().toISOString(),
         })
         .eq("id", materialId);
+
+      const successfulStages = Number(summaryOutcome.status === "fulfilled") + Number(kitOutcome.status === "fulfilled");
+      const groundingConfidence = Math.round(Math.min(extractionConfidence, 0.65 + successfulStages * 0.15) * 100) / 100;
+      if (anySucceeded) await publishStudyPack(admin, materialId, callerId, materialType, documentModel, extractionConfidence, groundingConfidence);
 
       return jsonResponse({
         ok: anySucceeded,
