@@ -310,6 +310,50 @@ async function renderPdfPageToCanvas(pdf: any, pageNumber: number): Promise<HTML
   return canvas;
 }
 
+function rotateCanvas(source: HTMLCanvasElement, degrees: 90 | 180 | 270): HTMLCanvasElement {
+  const rotated = document.createElement("canvas");
+  const quarterTurn = degrees === 90 || degrees === 270;
+  rotated.width = quarterTurn ? source.height : source.width;
+  rotated.height = quarterTurn ? source.width : source.height;
+  const context = rotated.getContext("2d");
+  if (!context) return source;
+  context.translate(rotated.width / 2, rotated.height / 2);
+  context.rotate((degrees * Math.PI) / 180);
+  context.drawImage(source, -source.width / 2, -source.height / 2);
+  return rotated;
+}
+
+function ocrTextScore(text: string, confidence = 0): number {
+  const words = text.match(/[A-Za-z][A-Za-z'-]{2,}/g) ?? [];
+  const readableWords = words.filter((word) => /[aeiou]/i.test(word)).length;
+  return text.length + readableWords * 8 + confidence * 2;
+}
+
+async function recognizeWithOrientation(
+  worker: any,
+  canvas: HTMLCanvasElement,
+): Promise<{ text: string; confidence: number }> {
+  const first = (await worker.recognize(canvas)) as {
+    data?: { text?: string; confidence?: number };
+  };
+  const firstText = cleanWhitespace(first.data?.text ?? "");
+  const firstConfidence = typeof first.data?.confidence === "number" ? first.data.confidence : 0;
+  if (firstText.length >= 100 && firstConfidence >= 45)
+    return { text: firstText, confidence: firstConfidence };
+  const candidates = [{ text: firstText, confidence: firstConfidence }];
+  for (const degrees of [90, 270] as const) {
+    const result = (await worker.recognize(rotateCanvas(canvas, degrees))) as {
+      data?: { text?: string; confidence?: number };
+    };
+    const text = cleanWhitespace(result.data?.text ?? "");
+    const confidence = typeof result.data?.confidence === "number" ? result.data.confidence : 0;
+    candidates.push({ text, confidence });
+  }
+  return candidates.sort(
+    (a, b) => ocrTextScore(b.text, b.confidence) - ocrTextScore(a.text, a.confidence),
+  )[0];
+}
+
 async function prepareImageForOcr(source: File | Blob): Promise<HTMLCanvasElement | File | Blob> {
   if (typeof createImageBitmap !== "function") return source;
   const bitmap = await createImageBitmap(source, { imageOrientation: "from-image" });
@@ -332,6 +376,23 @@ async function prepareImageForOcr(source: File | Blob): Promise<HTMLCanvasElemen
     pixels.data[i + 2] = contrasted;
   }
   context.putImageData(pixels, 0, 0);
+  return canvas;
+}
+
+async function ensureCanvasForOcr(
+  source: HTMLCanvasElement | File | Blob,
+): Promise<HTMLCanvasElement> {
+  if (source instanceof HTMLCanvasElement) return source;
+  if (typeof createImageBitmap !== "function")
+    throw new Error("This browser cannot prepare an image for OCR.");
+  const bitmap = await createImageBitmap(source);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D context unavailable");
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
   return canvas;
 }
 
@@ -446,12 +507,12 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
     });
     try {
       const canvas = await renderPdfPageToCanvas(pdf, pageNumber);
-      const { data } = (await withTimeout(
-        worker.recognize(canvas) as Promise<unknown>,
-        OCR_PAGE_TIMEOUT_MS,
+      const best = await withTimeout(
+        recognizeWithOrientation(worker, canvas),
+        OCR_PAGE_TIMEOUT_MS * 3,
         `Reading page ${pageNumber}`,
-      )) as { data?: { text?: string } };
-      const ocrText = cleanWhitespace(data?.text ?? "");
+      );
+      const ocrText = best.text;
       // Keep whichever is longer — occasionally the native layer had
       // *something* just under the threshold that OCR actually misses.
       nativePages[pageIndex] =
@@ -517,18 +578,18 @@ async function extractImage(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDo
   const worker = await getOcrWorker(ctx);
   try {
     const prepared = await prepareImageForOcr(file);
-    const { data } = (await withTimeout(
-      worker.recognize(prepared) as Promise<unknown>,
-      OCR_PAGE_TIMEOUT_MS,
+    const best = await withTimeout(
+      recognizeWithOrientation(worker, await ensureCanvasForOcr(prepared)),
+      OCR_PAGE_TIMEOUT_MS * 3,
       "Reading the image",
-    )) as { data?: { text?: string; confidence?: number } };
+    );
     ctx.budget.remaining--;
-    const text = cleanWhitespace(data?.text ?? "");
+    const text = best.text;
     const quality = qualityOf(text);
     const base = computeConfidence({ quality, totalPages: 1, ocrPages: 1, uncoveredPages: 0 });
     const confidence = Math.min(
       base.confidence,
-      typeof data?.confidence === "number" ? data.confidence / 100 : base.confidence,
+      best.confidence ? best.confidence / 100 : base.confidence,
     );
     return finalizeExtraction({
       text,
