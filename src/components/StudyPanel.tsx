@@ -12,7 +12,6 @@ import {
   Download,
   Maximize2,
   Share2,
-  Heart,
   Bookmark,
   BookmarkCheck,
   WifiOff,
@@ -34,8 +33,6 @@ import {
   useRelatedMaterials,
   useIncrementDownload,
   useYoutubeRecommendations,
-  useMaterialLikeStatus,
-  useToggleMaterialLike,
   useSavedMaterials,
   useToggleSaved,
   useRegenerateMaterial,
@@ -118,8 +115,6 @@ export function StudyPanel({
   const bumpStreak = useBumpStreak();
   const isOnline = useOnlineStatus();
   const incrementDownload = useIncrementDownload();
-  const { data: liked } = useMaterialLikeStatus(material.id);
-  const toggleLike = useToggleMaterialLike();
 
   // "Save" used to only exist inside the full-screen viewer's toolbar —
   // meaning it was hidden behind the same extra tap as the document
@@ -137,7 +132,7 @@ export function StudyPanel({
   // to remove. useOfflineStatus is reactive (see src/lib/offline.ts), so
   // this stays in sync if the same material is downloaded from
   // somewhere else too.
-  const { downloaded } = useOfflineStatus(material.id);
+  const { downloaded, verified } = useOfflineStatus(material.id);
   const [downloading, setDownloading] = useState(false);
   const [removingOffline, setRemovingOffline] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -307,14 +302,6 @@ export function StudyPanel({
     }
   }
 
-  function handleLike() {
-    if (!user) {
-      toast.error("Sign in to like this.");
-      return;
-    }
-    toggleLike.mutate(material.id);
-  }
-
   function handleToggleSave() {
     if (!user) {
       toast.error("Sign in to save this.");
@@ -453,21 +440,23 @@ export function StudyPanel({
             <button
               onClick={downloaded ? handleRemoveDownload : handleDownload}
               disabled={downloading || removingOffline}
-              className={`${pillBtn} ${downloaded ? "border-teal/40 bg-teal/10 text-teal hover:bg-teal/10" : ""}`}
+              className={`${pillBtn} ${verified ? "border-teal/40 bg-teal/10 text-teal hover:bg-teal/10" : downloaded ? "border-copper/40 bg-copper/10 text-copper hover:bg-copper/10" : ""}`}
               title={
-                downloaded
-                  ? "Downloaded — opens with zero signal. Tap to remove."
-                  : "Download — saves to your device and your offline Library"
+                verified
+                  ? "Offline ready — opens with zero signal. Tap to remove."
+                  : downloaded
+                    ? "Downloaded, but offline verification is incomplete. Tap to retry or remove."
+                    : "Download — saves to your device and your offline Library"
               }
             >
               {downloading || removingOffline ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : downloaded ? (
+              ) : verified ? (
                 <Check className="h-3.5 w-3.5" />
               ) : (
                 <Download className="h-3.5 w-3.5" />
               )}
-              {downloaded ? "Downloaded" : "Download"}
+              {verified ? "Offline ready" : downloaded ? "Downloaded" : "Download"}
             </button>
           </>
         )}
@@ -485,14 +474,6 @@ export function StudyPanel({
         </button>
         <button onClick={handleShare} className={pillBtn}>
           <Share2 className="h-3.5 w-3.5" /> Share
-        </button>
-        <button
-          onClick={handleLike}
-          disabled={toggleLike.isPending}
-          className={`${pillBtn} ${liked ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/10" : ""}`}
-        >
-          <Heart className={`h-3.5 w-3.5 ${liked ? "fill-current" : ""}`} />
-          {material.likes_count > 0 ? material.likes_count : "Like"}
         </button>
         {!isOnline && (
           <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
@@ -611,7 +592,7 @@ export function StudyPanel({
             </div>
           )}
 
-          <div className="relative flex gap-1 rounded-xl border border-border bg-surface-muted p-1">
+          <div className="sticky top-16 z-20 relative flex gap-1 rounded-xl border border-border bg-surface-muted/95 p-1 shadow-soft backdrop-blur">
             {TABS.map((t) => (
               <button
                 key={t.id}

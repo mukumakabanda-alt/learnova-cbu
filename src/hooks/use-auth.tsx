@@ -31,6 +31,20 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function friendlyAuthError(message: string): string {
+  const value = message.toLowerCase();
+  if (value.includes("invalid login") || value.includes("invalid credentials"))
+    return "That student number and password do not match. Try again.";
+  if (value.includes("email not confirmed") || value.includes("confirm email"))
+    return "Your account needs email confirmation before you can sign in. Please contact support or try again later.";
+  if (value.includes("user already registered"))
+    return "That student number already has an account. Try signing in instead.";
+  if (value.includes("email provider") || value.includes("disabled"))
+    return "Sign-up is temporarily unavailable. Please try again later.";
+  if (value.includes("password")) return "Please check your password and try again.";
+  return "We couldn't complete that request right now. Please try again later.";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -52,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(async ({ data }: { data: { session: any } }) => {
       if (!active) return;
       setSession(data.session);
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem("learnova-active-user", data.session?.user?.id ?? "guest");
       // Wait for the profile/roles fetch to actually finish before
       // flipping `loading` to false. This used to call loadProfile()
       // without awaiting it, so `loading` went false — and anything
@@ -86,6 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // back to a loading state on a timer for no reason.
     const { data: sub } = supabase.auth.onAuthStateChange((event: string, newSession: any) => {
       setSession(newSession);
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem("learnova-active-user", newSession?.user?.id ?? "guest");
 
       if (event === "TOKEN_REFRESHED") return;
 
@@ -132,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
-    if (error) return { error: error.message };
+    if (error) return { error: friendlyAuthError(error.message) };
     if (data.session) return { error: null };
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
@@ -142,7 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (signInError) {
       return {
         error:
-          "Your account was created, but this project still has \"Confirm email\" switched on in Supabase Auth settings, so sign-in is blocked until that's turned off. Go to Lovable Cloud → Backend → Authentication → Email, disable \"Confirm email\", then sign in again.",
+          "Your account was created, but sign-in is waiting for confirmation. Please try again later or contact support.",
       };
     }
     return { error: null };
@@ -150,11 +168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    return { error: error ? friendlyAuthError(error.message) : null };
   };
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    if (typeof localStorage !== "undefined") localStorage.setItem("learnova-active-user", "guest");
   };
 
   const refreshProfile = async () => {
@@ -185,4 +204,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-  }
+}

@@ -2,9 +2,23 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import {
-  removeOfflineMaterial, clearAllOffline, useOnlineStatus, useOfflineLibrary, deviceStorageEstimate,
+  removeOfflineMaterial,
+  clearAllOffline,
+  useOnlineStatus,
+  useOfflineLibrary,
+  deviceStorageEstimate,
 } from "@/lib/offline";
-import { Download, Trash2, WifiOff, Wifi, FileText, ArrowRight, HardDrive, Check, Info } from "lucide-react";
+import {
+  Download,
+  Trash2,
+  WifiOff,
+  Wifi,
+  FileText,
+  ArrowRight,
+  HardDrive,
+  Check,
+  Info,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/offline")({
@@ -99,7 +113,9 @@ function OfflineLibrary() {
     Promise.all(staleIds.map((id) => removeOfflineMaterial(id))).then(() => {
       setConfirmingClearStale(false);
       setClearingStale(false);
-      toast.success(`Removed ${staleIds.length} item${staleIds.length === 1 ? "" : "s"} you hadn't opened in a while.`);
+      toast.success(
+        `Removed ${staleIds.length} item${staleIds.length === 1 ? "" : "s"} you hadn't opened in a while.`,
+      );
     });
   }
 
@@ -110,8 +126,12 @@ function OfflineLibrary() {
       <section className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">Your library</div>
-            <h1 className="mt-2 font-display text-3xl leading-tight text-foreground sm:text-4xl">Offline</h1>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">
+              Your library
+            </div>
+            <h1 className="mt-2 font-display text-3xl leading-tight text-foreground sm:text-4xl">
+              Offline
+            </h1>
           </div>
           <div
             className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
@@ -123,7 +143,8 @@ function OfflineLibrary() {
           </div>
         </div>
         <p className="mt-3 max-w-md text-sm text-muted-foreground">
-          Anything downloaded here opens with zero signal — the real document, not just its summary. Stored on this device only.
+          Anything downloaded here opens with zero signal — the real document, not just its summary.
+          Stored on this device only.
         </p>
 
         {/* Honest partial-availability note — only when it's actually
@@ -133,8 +154,9 @@ function OfflineLibrary() {
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-copper/25 bg-copper/5 p-3 text-xs text-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-copper" />
             <span>
-              You're offline right now. Documents are cached for {stats.filesCount} of {stats.count} saved item{stats.count === 1 ? "" : "s"} —
-              the rest still work for summary, flashcards, and quiz, just not the original file until you're back online.
+              You're offline right now. Documents are cached for {stats.filesCount} of {stats.count}{" "}
+              saved item{stats.count === 1 ? "" : "s"} — the rest still work for summary,
+              flashcards, and quiz, just not the original file until you're back online.
             </span>
           </div>
         )}
@@ -148,17 +170,23 @@ function OfflineLibrary() {
                 </div>
                 <div>
                   <div className="text-sm font-semibold text-foreground">
-                    {stats.count} material{stats.count === 1 ? "" : "s"} · {formatBytes(stats.bytes)}
+                    {stats.count} material{stats.count === 1 ? "" : "s"} ·{" "}
+                    {formatBytes(stats.bytes)}
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {stats.filesCount} fully downloaded{stats.count > stats.filesCount ? ` · ${stats.count - stats.filesCount} study tools only` : ""}
+                    {stats.filesCount} fully downloaded
+                    {stats.count > stats.filesCount
+                      ? ` · ${stats.count - stats.filesCount} study tools only`
+                      : ""}
                   </div>
                 </div>
               </div>
               <button
                 onClick={handleClearAll}
                 className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  confirmingClearAll ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  confirmingClearAll
+                    ? "bg-destructive text-destructive-foreground"
+                    : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 }`}
               >
                 {confirmingClearAll ? "Tap to confirm" : "Clear all"}
@@ -167,21 +195,30 @@ function OfflineLibrary() {
 
             {deviceStorage && (
               <div className="mt-3 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
-                Device storage: {formatBytes(deviceStorage.usage)} used · {formatBytes(Math.max(0, deviceStorage.quota - deviceStorage.usage))} free
+                Device storage: {formatBytes(deviceStorage.usage)} used ·{" "}
+                {formatBytes(Math.max(0, deviceStorage.quota - deviceStorage.usage))} free
               </div>
             )}
 
             {staleIds.length > 0 && (
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
-                <span className="text-[11px] text-muted-foreground">{staleIds.length} item{staleIds.length === 1 ? "" : "s"} not opened in 30+ days</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {staleIds.length} item{staleIds.length === 1 ? "" : "s"} not opened in 30+ days
+                </span>
                 <button
                   onClick={handleClearStale}
                   disabled={clearingStale}
                   className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                    confirmingClearStale ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    confirmingClearStale
+                      ? "bg-destructive text-destructive-foreground"
+                      : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   }`}
                 >
-                  {clearingStale ? "Clearing…" : confirmingClearStale ? "Tap to confirm" : "Clear old items"}
+                  {clearingStale
+                    ? "Clearing…"
+                    : confirmingClearStale
+                      ? "Tap to confirm"
+                      : "Clear old items"}
                 </button>
               </div>
             )}
@@ -192,7 +229,10 @@ function OfflineLibrary() {
           {loading ? (
             <div className="space-y-3">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="h-20 animate-pulse rounded-2xl border border-border bg-surface-muted" />
+                <div
+                  key={i}
+                  className="h-20 animate-pulse rounded-2xl border border-border bg-surface-muted"
+                />
               ))}
             </div>
           ) : bundles.length === 0 ? (
@@ -202,7 +242,8 @@ function OfflineLibrary() {
               </div>
               <p className="mt-3 text-sm font-semibold text-foreground">Nothing downloaded yet</p>
               <p className="mx-auto mt-1 max-w-xs text-xs text-muted-foreground">
-                Open any material from the Study catalogue and tap Download — it'll show up here, ready with zero signal.
+                Open any material from the Study catalogue and tap Download — it'll show up here,
+                ready with zero signal.
               </p>
               <Link
                 to="/study"
@@ -213,56 +254,71 @@ function OfflineLibrary() {
             </div>
           ) : (
             <div className="space-y-3">
-              {bundles.map(({ material, flashcards, quiz, savedAt, lastOpenedAt, fileBlob }) => (
-                <Link
-                  key={material.id}
-                  to="/study/$id"
-                  params={{ id: material.id }}
-                  className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-soft transition-colors hover:border-primary/30"
-                >
-                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper">
-                    <FileText className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <div className="truncate text-sm font-semibold text-foreground">{material.title}</div>
-                      {fileBlob ? (
-                        <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
-                          <Check className="h-2.5 w-2.5" /> Downloaded
-                        </span>
-                      ) : (
-                        <span
-                          title="The document itself needs a connection — summary, flashcards, and quiz all still work offline."
-                          className="shrink-0 rounded-full bg-surface-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
-                        >
-                          Study tools only
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {material.courses?.code ?? "General"} · {material.type}
-                      {fileBlob ? ` · ${formatBytes(fileBlob.size)}` : ""}
-                    </div>
-                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">
-                      {material.summary ? "Summary · " : ""}{flashcards.length} cards · {quiz.length} quiz Qs
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground/70">
-                      {lastOpenedAt ? `Opened ${relativeTime(lastOpenedAt)}` : `Saved ${relativeTime(savedAt)}`}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleRemove(material.id);
-                    }}
-                    disabled={removingId === material.id}
-                    aria-label="Remove from offline library"
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-50"
+              {bundles.map(
+                ({
+                  material,
+                  flashcards,
+                  quiz,
+                  savedAt,
+                  lastOpenedAt,
+                  fileBlob,
+                  verifiedOffline,
+                }) => (
+                  <Link
+                    key={material.id}
+                    to="/study/$id"
+                    params={{ id: material.id }}
+                    className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-soft transition-colors hover:border-primary/30"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </Link>
-              ))}
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <div className="truncate text-sm font-semibold text-foreground">
+                          {material.title}
+                        </div>
+                        {verifiedOffline ? (
+                          <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-teal">
+                            <Check className="h-2.5 w-2.5" /> Offline ready
+                          </span>
+                        ) : (
+                          <span
+                            title="The document itself needs a connection — summary, flashcards, and quiz all still work offline."
+                            className="shrink-0 rounded-full bg-surface-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
+                          >
+                            {fileBlob ? "Downloaded · verify again" : "Study tools only"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {material.courses?.code ?? "General"} · {material.type}
+                        {fileBlob ? ` · ${formatBytes(fileBlob.size)}` : ""}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">
+                        {material.summary ? "Summary · " : ""}
+                        {flashcards.length} cards · {quiz.length} quiz Qs
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground/70">
+                        {lastOpenedAt
+                          ? `Opened ${relativeTime(lastOpenedAt)}`
+                          : `Saved ${relativeTime(savedAt)}`}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleRemove(material.id);
+                      }}
+                      disabled={removingId === material.id}
+                      aria-label="Remove from offline library"
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </Link>
+                ),
+              )}
             </div>
           )}
         </div>
@@ -272,4 +328,4 @@ function OfflineLibrary() {
       <MobileTabBar />
     </div>
   );
-    }
+}

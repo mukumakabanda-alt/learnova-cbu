@@ -13,6 +13,16 @@
 
 let warmed = false;
 
+function showUpdatePrompt(update: () => Promise<void>) {
+  import("sonner").then(({ toast }) => {
+    toast("A new Learnova version is ready", {
+      description: "Refresh now to keep document and PDF assets in sync.",
+      action: { label: "Refresh", onClick: () => void update() },
+      duration: Infinity,
+    });
+  });
+}
+
 function isPreviewHost(hostname: string): boolean {
   return (
     hostname.startsWith("id-preview--") ||
@@ -32,7 +42,10 @@ async function removeAppWorker(): Promise<void> {
   await Promise.all(
     registrations
       .filter((registration) => {
-        const activeUrl = registration.active?.scriptURL ?? registration.waiting?.scriptURL ?? registration.installing?.scriptURL;
+        const activeUrl =
+          registration.active?.scriptURL ??
+          registration.waiting?.scriptURL ??
+          registration.installing?.scriptURL;
         return activeUrl ? new URL(activeUrl).pathname === "/sw.js" : false;
       })
       .map((registration) => registration.unregister()),
@@ -52,7 +65,12 @@ export function registerOfflineViewerSupport() {
     removeAppWorker().catch(() => {});
   } else if ("serviceWorker" in navigator && window.location.protocol === "https:") {
     import("virtual:pwa-register")
-      .then(({ registerSW }) => registerSW({ immediate: true }))
+      .then(({ registerSW }) =>
+        registerSW({
+          immediate: true,
+          onNeedRefresh: () => showUpdatePrompt(async () => window.location.reload()),
+        }),
+      )
       .catch(() => {
         /* offline caching is a bonus, never a blocker */
       });
@@ -63,9 +81,7 @@ export function registerOfflineViewerSupport() {
     warmed = true;
     // Fire and forget — each import pulls its chunk (and, for pdf.js,
     // its worker) into the cache.
-    import("@/lib/pdfjs")
-      .then((m) => m.loadPdfjs())
-      .catch(() => (warmed = false));
+    import("@/lib/pdfjs").then((m) => m.loadPdfjs()).catch(() => (warmed = false));
     import("@/lib/zip-reader").catch(() => {});
     import("jszip").catch(() => {});
     import("mammoth").catch(() => {});

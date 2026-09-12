@@ -44,11 +44,19 @@ export type OfflineBundle = {
   /** Pages 2..N of a bundled multi-image material, in order — undefined for an ordinary single-file material, and also left undefined (rather than a partial array) if any page failed to fetch, so a bundle is only ever "offline" when every page genuinely made it. */
   extraFileBlobs?: Blob[];
   extraFileMimes?: string[];
+  verifiedOffline?: boolean;
+  offlineState?: "metadata" | "file" | "ready";
 };
 
-const DB_NAME = "learnova-offline";
-const DB_VERSION = 2;
+const DB_NAME_PREFIX = "learnova-offline";
+const DB_VERSION = 3;
 const STORE = "materials";
+
+function offlineNamespace(): string {
+  if (typeof localStorage === "undefined") return "guest";
+  const value = localStorage.getItem("learnova-active-user")?.trim();
+  return value ? value.replace(/[^a-zA-Z0-9_-]/g, "_") : "guest";
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -56,7 +64,7 @@ function openDb(): Promise<IDBDatabase> {
       reject(new Error("IndexedDB isn't available in this browser."));
       return;
     }
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(`${DB_NAME_PREFIX}-${offlineNamespace()}`, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
@@ -68,7 +76,10 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-async function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
   const db = await openDb();
   return new Promise<T>((resolve, reject) => {
     const tx = db.transaction(STORE, mode);
@@ -123,6 +134,12 @@ export async function saveMaterialOffline(bundle: {
     fileMime: bundle.fileMime ?? existing?.fileMime,
     extraFileBlobs: bundle.extraFileBlobs ?? existing?.extraFileBlobs,
     extraFileMimes: bundle.extraFileMimes ?? existing?.extraFileMimes,
+    verifiedOffline:
+      !!(bundle.fileBlob ?? existing?.fileBlob) &&
+      ((bundle.material.extra_file_paths ?? []).length === 0 ||
+        (bundle.extraFileBlobs ?? existing?.extraFileBlobs ?? []).length ===
+          (bundle.material.extra_file_paths ?? []).length),
+    offlineState: (bundle.fileBlob ?? existing?.fileBlob) ? "ready" : "metadata",
     studyPack: {
       summary: bundle.material.summary,
       tags: bundle.material.tags,
@@ -157,29 +174,45 @@ export async function saveMaterialOffline(bundle: {
 export async function saveMaterialOfflineFromDownload(
   material: MaterialWithCourse,
   file?: { blob: Blob; mime: string } | null,
-): Promise<void> {
+): Promise<{ verified: boolean; missing: string[] }> {
   const extraPaths = material.extra_file_paths ?? [];
   const [flashcardsResult, quizResult, fileResult, extrasResult] = await Promise.allSettled([
     supabase.from("flashcards").select("*").eq("material_id", material.id),
     supabase.from("quiz_questions").select("*").eq("material_id", material.id),
-    file ? Promise.resolve(file) : material.file_path ? fetchFileForOffline(material.file_path) : Promise.resolve(null),
-    extraPaths.length > 0 ? Promise.all(extraPaths.map((p) => fetchFileForOffline(p))) : Promise.resolve([]),
+    file
+      ? Promise.resolve(file)
+      : material.file_path
+        ? fetchFileForOffline(material.file_path)
+        : Promise.resolve(null),
+    extraPaths.length > 0
+      ? Promise.all(extraPaths.map((p) => fetchFileForOffline(p)))
+      : Promise.resolve([]),
   ]);
 
   if (flashcardsResult.status === "rejected") {
-    console.error("Offline save: couldn't fetch flashcards, saving without them:", flashcardsResult.reason);
+    console.error(
+      "Offline save: couldn't fetch flashcards, saving without them:",
+      flashcardsResult.reason,
+    );
   }
   if (quizResult.status === "rejected") {
     console.error("Offline save: couldn't fetch the quiz, saving without it:", quizResult.reason);
   }
   if (fileResult.status === "rejected") {
-    console.error("Offline save: couldn't fetch the file, saving metadata only:", fileResult.reason);
+    console.error(
+      "Offline save: couldn't fetch the file, saving metadata only:",
+      fileResult.reason,
+    );
   }
   if (extrasResult.status === "rejected") {
-    console.error("Offline save: couldn't fetch this bundle's other pages, saving what succeeded:", extrasResult.reason);
+    console.error(
+      "Offline save: couldn't fetch this bundle's other pages, saving what succeeded:",
+      extrasResult.reason,
+    );
   }
 
-  const flashcards = flashcardsResult.status === "fulfilled" ? (flashcardsResult.value.data ?? []) : [];
+  const flashcards =
+    flashcardsResult.status === "fulfilled" ? (flashcardsResult.value.data ?? []) : [];
   const quiz = quizResult.status === "fulfilled" ? (quizResult.value.data ?? []) : [];
   const fetchedFile = fileResult.status === "fulfilled" ? fileResult.value : null;
   const fetchedExtras = extrasResult.status === "fulfilled" ? extrasResult.value : [];
@@ -187,7 +220,8 @@ export async function saveMaterialOfflineFromDownload(
   // A bundle only counts as offline-ready if every page came down — a
   // partial set would silently show fewer pages than the document
   // actually has, which is worse than plainly not being cached yet.
-  const extrasComplete = fetchedExtras.length === extraPaths.length && fetchedExtras.every((p) => p !== null);
+  const extrasComplete =
+    fetchedExtras.length === extraPaths.length && fetchedExtras.every((p) => p !== null);
 
   try {
     await saveMaterialOffline({
@@ -199,8 +233,16 @@ export async function saveMaterialOfflineFromDownload(
       extraFileBlobs: extrasComplete ? fetchedExtras.map((p) => p!.blob) : undefined,
       extraFileMimes: extrasComplete ? fetchedExtras.map((p) => p!.mime) : undefined,
     });
+    const missing: string[] = [];
+    if (!fetchedFile) missing.push("the document file");
+    if (flashcardsResult.status !== "fulfilled" || flashcardsResult.value.error)
+      missing.push("flashcards");
+    if (quizResult.status !== "fulfilled" || quizResult.value.error) missing.push("the quiz");
+    if (!extrasComplete) missing.push("all document pages");
+    return { verified: !!fetchedFile && extrasComplete, missing };
   } catch (e) {
     console.error("Couldn't cache this material for offline use after download:", e);
+    return { verified: false, missing: ["offline storage"] };
   }
 }
 
@@ -253,7 +295,9 @@ export async function touchLastOpened(id: string): Promise<void> {
   try {
     const existing = await getOfflineMaterial(id);
     if (!existing) return;
-    await withStore("readwrite", (store) => store.put({ ...existing, lastOpenedAt: new Date().toISOString() }));
+    await withStore("readwrite", (store) =>
+      store.put({ ...existing, lastOpenedAt: new Date().toISOString() }),
+    );
     notify();
   } catch {
     // Not being able to update a "last opened" timestamp is never worth surfacing as an error.
@@ -275,7 +319,11 @@ export async function getOfflineFileUrl(id: string): Promise<{ url: string; mime
 }
 
 /** Real numbers, not a guess: how many materials are cached and how much device storage they're actually using. */
-export async function offlineStorageStats(): Promise<{ count: number; bytes: number; filesCount: number }> {
+export async function offlineStorageStats(): Promise<{
+  count: number;
+  bytes: number;
+  filesCount: number;
+}> {
   const all = await listOfflineMaterials();
   const bytes = all.reduce((sum, b) => sum + (b.fileBlob?.size ?? 0), 0);
   const filesCount = all.filter((b) => !!b.fileBlob).length;
@@ -306,7 +354,9 @@ export async function deviceStorageEstimate(): Promise<{ usage: number; quota: n
 
 /** True/false, live-updating as the browser goes on/offline. */
 export function useOnlineStatus(): boolean {
-  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
 
   useEffect(() => {
     const goOnline = () => setOnline(true);
@@ -329,23 +379,39 @@ export function useOnlineStatus(): boolean {
  * in the same instant, with no reload. This is what every "Downloaded"
  * badge in the app reads from.
  */
-export function useOfflineStatus(materialId: string): { downloaded: boolean; hasFile: boolean; loading: boolean } {
-  const [state, setState] = useState<{ downloaded: boolean; hasFile: boolean; loading: boolean }>({
+export function useOfflineStatus(materialId: string): {
+  downloaded: boolean;
+  hasFile: boolean;
+  verified: boolean;
+  loading: boolean;
+} {
+  const [state, setState] = useState<{
+    downloaded: boolean;
+    hasFile: boolean;
+    verified: boolean;
+    loading: boolean;
+  }>({
     downloaded: false,
     hasFile: false,
+    verified: false,
     loading: true,
   });
 
   useEffect(() => {
     if (!materialId) {
-      setState({ downloaded: false, hasFile: false, loading: false });
+      setState({ downloaded: false, hasFile: false, verified: false, loading: false });
       return;
     }
     let active = true;
     function refresh() {
       getOfflineMaterial(materialId).then((bundle) => {
         if (!active) return;
-        setState({ downloaded: !!bundle, hasFile: !!bundle?.fileBlob, loading: false });
+        setState({
+          downloaded: !!bundle,
+          hasFile: !!bundle?.fileBlob,
+          verified: !!bundle?.verifiedOffline,
+          loading: false,
+        });
       });
     }
     refresh();
@@ -367,7 +433,10 @@ export function useOfflineStatus(materialId: string): { downloaded: boolean; has
 // downloading or removing something on any page updates every other page
 // reading this, with no manual refresh and no stale list left behind.
 export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loading: boolean } {
-  const [state, setState] = useState<{ items: OfflineBundle[]; loading: boolean }>({ items: [], loading: true });
+  const [state, setState] = useState<{ items: OfflineBundle[]; loading: boolean }>({
+    items: [],
+    loading: true,
+  });
 
   useEffect(() => {
     let active = true;
@@ -375,7 +444,9 @@ export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loa
       listOfflineMaterials().then((all) => {
         if (!active) return;
         const sorted = [...all].sort(
-          (a, b) => new Date(b.lastOpenedAt ?? b.savedAt).getTime() - new Date(a.lastOpenedAt ?? a.savedAt).getTime(),
+          (a, b) =>
+            new Date(b.lastOpenedAt ?? b.savedAt).getTime() -
+            new Date(a.lastOpenedAt ?? a.savedAt).getTime(),
         );
         setState({ items: limit ? sorted.slice(0, limit) : sorted, loading: false });
       });
@@ -389,4 +460,4 @@ export function useOfflineLibrary(limit?: number): { items: OfflineBundle[]; loa
   }, [limit]);
 
   return state;
-      }
+}

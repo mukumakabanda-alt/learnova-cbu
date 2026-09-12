@@ -59,19 +59,21 @@ function MaterialRowCard({
     setDownloading(true);
     try {
       const extraFilePaths = m.extra_file_paths ?? [];
+      let offlineResult;
       if (extraFilePaths.length > 0) {
         await forceDownloadBundleAsZip([m.file_path, ...extraFilePaths], m.title);
         // saveMaterialOfflineFromDownload re-fetches every page itself
         // for a bundle (it already knows to walk extra_file_paths) —
         // there's no single pre-fetched blob to hand it the way there
         // is for an ordinary material below.
-        await saveMaterialOfflineFromDownload({ ...m, courses: course });
+        offlineResult = await saveMaterialOfflineFromDownload({ ...m, courses: course });
       } else {
         const blob = await forceDownload(m.file_path, m.title);
-        await saveMaterialOfflineFromDownload({ ...m, courses: course }, { blob, mime: blob.type });
+        offlineResult = await saveMaterialOfflineFromDownload({ ...m, courses: course }, { blob, mime: blob.type });
       }
       incrementDownload.mutate(m.id);
-      toast.success("Downloaded — also in your Library, opens with zero signal.");
+      if (offlineResult.verified) toast.success("Downloaded — offline ready in your Library.");
+      else toast.warning(`Downloaded, but offline setup is incomplete: ${offlineResult.missing.join(", ")}.`);
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -107,6 +109,7 @@ function MaterialRowCard({
         onClick={onToggleSaved}
         disabled={isPending}
         aria-pressed={isSaved}
+        aria-label={isSaved ? `Remove ${m.title} from saved materials` : `Save ${m.title}`}
         className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:cursor-wait disabled:opacity-60 ${isSaved ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"}`}
       >
         <Bookmark className="h-4 w-4" />
@@ -115,6 +118,7 @@ function MaterialRowCard({
         <button
           onClick={handleDownload}
           disabled={downloading}
+          aria-label={downloaded ? `Download ${m.title} again` : `Download ${m.title} for offline use`}
           className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:opacity-60 ${
             downloaded ? "border-teal/40 bg-teal/10 text-teal" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
           }`}

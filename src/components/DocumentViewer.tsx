@@ -12,19 +12,35 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  X, Download, Bookmark, BookmarkCheck, Loader2, FileWarning, Check, CloudOff,
+  X,
+  Download,
+  Bookmark,
+  BookmarkCheck,
+  Loader2,
+  FileWarning,
+  Check,
+  CloudOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getViewUrl, forceDownload, forceDownloadBundleAsZip, downloadBlob, originalFileName,
+  getViewUrl,
+  forceDownload,
+  forceDownloadBundleAsZip,
+  downloadBlob,
+  originalFileName,
 } from "@/lib/document-files";
 import { BlobRenderer, BundleRenderer, RenderError } from "@/components/doc-render";
 import {
-  useIncrementDownload, useSavedMaterials, useToggleSaved, type MaterialWithCourse,
+  useIncrementDownload,
+  useSavedMaterials,
+  useToggleSaved,
+  type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  getOfflineMaterial, saveMaterialOfflineFromDownload, touchLastOpened,
+  getOfflineMaterial,
+  saveMaterialOfflineFromDownload,
+  touchLastOpened,
 } from "@/lib/offline";
 
 /* ───────────────────────── shared loading hook ───────────────────────── */
@@ -132,7 +148,11 @@ function useDocumentBundleBlobs(
   extraFilePaths: string[],
   enabled: boolean,
 ): BundleLoadState {
-  const [state, setState] = useState<BundleLoadState>({ pages: [], fromOffline: false, error: null });
+  const [state, setState] = useState<BundleLoadState>({
+    pages: [],
+    fromOffline: false,
+    error: null,
+  });
   const pathsKey = [filePath, ...extraFilePaths].join("\u0001");
 
   useEffect(() => {
@@ -156,7 +176,11 @@ function useDocumentBundleBlobs(
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         const used = await fromCache();
         if (!used && active) {
-          setState({ pages: [], fromOffline: false, error: "You're offline and this document hasn't been saved to your device yet." });
+          setState({
+            pages: [],
+            fromOffline: false,
+            error: "You're offline and this document hasn't been saved to your device yet.",
+          });
         }
         return;
       }
@@ -176,7 +200,11 @@ function useDocumentBundleBlobs(
       } catch (e) {
         const used = await fromCache();
         if (!used && active) {
-          setState({ pages: [], fromOffline: false, error: e instanceof Error ? e.message : String(e) });
+          setState({
+            pages: [],
+            fromOffline: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
     })();
@@ -256,8 +284,12 @@ export function DocumentViewer({
           // A bundle fetches and caches page-by-page inside this call
           // itself (it already knows to walk extra_file_paths) — there's
           // no single pre-fetched blob to hand it the way there is below.
-          await saveMaterialOfflineFromDownload(material);
-          toast.success("Downloaded — also saved for offline viewing.");
+          const offlineResult = await saveMaterialOfflineFromDownload(material);
+          if (offlineResult.verified) toast.success("Downloaded — offline ready.");
+          else
+            toast.warning(
+              `Downloaded, but offline setup is incomplete: ${offlineResult.missing.join(", ")}.`,
+            );
         }
       } else {
         let file: Blob;
@@ -270,8 +302,15 @@ export function DocumentViewer({
         incrementDownload.mutate(materialId);
         setDownloaded(true);
         if (material) {
-          await saveMaterialOfflineFromDownload(material, { blob: file, mime: file.type });
-          toast.success("Downloaded — also saved for offline viewing.");
+          const offlineResult = await saveMaterialOfflineFromDownload(material, {
+            blob: file,
+            mime: file.type,
+          });
+          if (offlineResult.verified) toast.success("Downloaded — offline ready.");
+          else
+            toast.warning(
+              `Downloaded, but offline setup is incomplete: ${offlineResult.missing.join(", ")}.`,
+            );
         }
       }
     } catch {
@@ -310,7 +349,9 @@ export function DocumentViewer({
           >
             <X className="h-5 w-5" />
           </button>
-          <div className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{title}</div>
+          <div className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+            {title}
+          </div>
           <button
             onClick={handleToggleSave}
             disabled={toggleSaved.isPending}
@@ -423,4 +464,4 @@ export function InlineDocumentPreview({
       </div>
     </div>
   );
-      }
+}

@@ -245,16 +245,14 @@ async function runBackgroundGeneration(params: {
       // Fresh material, nothing to delete first — this only ever runs
       // once, right after the row is created.
       if (flashcards.length) {
-        await supabase
-          .from("flashcards")
-          .insert(
-            flashcards.map((f) => ({
-              material_id: materialId,
-              question: f.question,
-              answer: f.answer,
-              position: f.position,
-            })),
-          );
+        await supabase.from("flashcards").insert(
+          flashcards.map((f) => ({
+            material_id: materialId,
+            question: f.question,
+            answer: f.answer,
+            position: f.position,
+          })),
+        );
       }
       if (quiz.length) {
         await supabase.from("quiz_questions").insert(
@@ -405,7 +403,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       // Refine the filename-only guess now that we have real content to
       // look at. Never overrides a category the person picked themselves.
       if (!typeManuallySet && quality !== "none") {
-        finalType = guessMaterialType(file.name, text);
+        finalType = (model.documentType as MaterialType) || guessMaterialType(file.name, text);
         setType(finalType);
       }
 
@@ -444,6 +442,11 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             format: model.format,
             coverage: model.coverage,
             signals: model.signals,
+            classification: {
+              type: model.documentType,
+              confidence: model.classificationConfidence,
+              evidence: model.classificationEvidence,
+            },
           },
           processing_error: tooLongForStudyTools
             ? `This document is available for browsing and download, but its ${pages} pages exceed the ${STUDY_TOOL_PAGE_LIMIT}-page study-tool limit. Upload a selected page as an image for focused AI help.`

@@ -5,7 +5,13 @@ import { toast } from "sonner";
 import { SiteHeader, SiteFooter, MobileTabBar } from "@/components/SiteHeader";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequestMaterialForm } from "@/components/RequestMaterialForm";
-import { useCatalog, useSavedMaterials, useToggleSaved, useIncrementDownload, type MaterialWithCourse } from "@/lib/queries";
+import {
+  useCatalog,
+  useSavedMaterials,
+  useToggleSaved,
+  useIncrementDownload,
+  type MaterialWithCourse,
+} from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
 import { useOfflineStatus } from "@/lib/offline";
 import { forceDownload, forceDownloadBundleAsZip } from "@/lib/document-files";
@@ -16,7 +22,11 @@ export const Route = createFileRoute("/study")({
   head: () => ({
     meta: [
       { title: "Study — Learnova" },
-      { name: "description", content: "Every document Learnova has turned into a summary, flashcards and a quiz — browse it, or upload your own." },
+      {
+        name: "description",
+        content:
+          "Every document Learnova has turned into a summary, flashcards and a quiz — browse it, or upload your own.",
+      },
     ],
   }),
   component: StudyHub,
@@ -53,15 +63,20 @@ function MaterialCard({ material: m, index }: { material: MaterialWithCourse; in
     setDownloading(true);
     try {
       const extraFilePaths = m.extra_file_paths ?? [];
+      let offlineResult;
       if (extraFilePaths.length > 0) {
         await forceDownloadBundleAsZip([m.file_path, ...extraFilePaths], m.title);
-        await saveMaterialOfflineFromDownload(m);
+        offlineResult = await saveMaterialOfflineFromDownload(m);
       } else {
         const blob = await forceDownload(m.file_path, m.title);
-        await saveMaterialOfflineFromDownload(m, { blob, mime: blob.type });
+        offlineResult = await saveMaterialOfflineFromDownload(m, { blob, mime: blob.type });
       }
       incrementDownload.mutate(m.id);
-      toast.success("Downloaded — also in your Library, opens with zero signal.");
+      if (offlineResult.verified) toast.success("Downloaded — offline ready in your Library.");
+      else
+        toast.warning(
+          `Downloaded, but offline setup is incomplete: ${offlineResult.missing.join(", ")}.`,
+        );
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -78,7 +93,11 @@ function MaterialCard({ material: m, index }: { material: MaterialWithCourse; in
     >
       {/* One tap target for the whole card — see the same fix on the
           course page for why the separate eye-icon button is gone. */}
-      <Link to="/study/$id" params={{ id: m.id }} className="flex min-w-0 flex-1 items-center gap-3">
+      <Link
+        to="/study/$id"
+        params={{ id: m.id }}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
           <FileText className="h-5 w-5" />
         </div>
@@ -93,7 +112,12 @@ function MaterialCard({ material: m, index }: { material: MaterialWithCourse; in
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {m.courses?.code ?? "General"} · {statusLabel(m.status)}
-            {m.uploader?.full_name ? <> · <span className="text-copper">by {m.uploader.full_name}</span></> : null}
+            {m.uploader?.full_name ? (
+              <>
+                {" "}
+                · <span className="text-copper">by {m.uploader.full_name}</span>
+              </>
+            ) : null}
           </div>
         </div>
       </Link>
@@ -105,7 +129,9 @@ function MaterialCard({ material: m, index }: { material: MaterialWithCourse; in
             aria-pressed={isSaved}
             aria-label={isSaved ? "Remove from saved" : "Save"}
             className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:opacity-60 ${
-              isSaved ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+              isSaved
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
             }`}
           >
             <Bookmark className="h-4 w-4" />
@@ -115,10 +141,18 @@ function MaterialCard({ material: m, index }: { material: MaterialWithCourse; in
             disabled={downloading}
             aria-label={downloaded ? "Downloaded" : "Download"}
             className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors disabled:opacity-60 ${
-              downloaded ? "border-teal/40 bg-teal/10 text-teal" : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
+              downloaded
+                ? "border-teal/40 bg-teal/10 text-teal"
+                : "border-border bg-surface text-foreground hover:bg-primary hover:text-primary-foreground"
             }`}
           >
-            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : downloaded ? <Check className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+            {downloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : downloaded ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
           </button>
         </>
       )}
@@ -138,9 +172,13 @@ function StudyHub() {
       <SiteHeader />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
         <div className="text-xs font-medium uppercase tracking-[0.2em] text-copper">Study</div>
-        <h1 className="mt-2 font-display text-4xl leading-tight text-foreground sm:text-5xl">One tap: summary, flashcards, quiz.</h1>
+        <h1 className="mt-2 font-display text-4xl leading-tight text-foreground sm:text-5xl">
+          One tap: summary, flashcards, quiz.
+        </h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-          Upload any document — PDF, Word, PowerPoint, text, a zip of files, whatever you've got — and Learnova turns it into study tools in under a minute, then it joins the catalogue below for everyone else too.
+          Upload any document — PDF, Word, PowerPoint, text, a zip of files, whatever you've got —
+          and Learnova turns it into study tools in under a minute, then it joins the catalogue
+          below for everyone else too.
         </p>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -160,9 +198,19 @@ function StudyHub() {
             {profile?.programme_code && (
               <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                 <span>
-                  {showAll ? "Showing every programme" : <>Curated for <span className="font-semibold text-copper">{profile.programme_code}</span></>}
+                  {showAll ? (
+                    "Showing every programme"
+                  ) : (
+                    <>
+                      Curated for{" "}
+                      <span className="font-semibold text-copper">{profile.programme_code}</span>
+                    </>
+                  )}
                 </span>
-                <button onClick={() => setShowAll(!showAll)} className="rounded-full border border-border px-3 py-1 font-semibold text-foreground hover:bg-surface-muted">
+                <button
+                  onClick={() => setShowAll(!showAll)}
+                  className="rounded-full border border-border px-3 py-1 font-semibold text-foreground hover:bg-surface-muted"
+                >
                   {showAll ? "Show my programme only" : "Show all programmes"}
                 </button>
               </div>
@@ -183,9 +231,15 @@ function StudyHub() {
 
           <aside className="space-y-4">
             <div className="rounded-2xl border border-border bg-card p-5">
-              <div className="text-xs font-semibold uppercase tracking-wide text-copper">Can't find it?</div>
-              <p className="mt-2 text-sm text-muted-foreground">Tell us what's missing and we'll add it.</p>
-              <div className="mt-3"><RequestMaterialForm /></div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+                Can't find it?
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Tell us what's missing and we'll add it.
+              </p>
+              <div className="mt-3">
+                <RequestMaterialForm />
+              </div>
             </div>
           </aside>
         </div>
@@ -195,4 +249,4 @@ function StudyHub() {
       <MobileTabBar />
     </div>
   );
-  }
+}

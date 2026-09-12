@@ -12,14 +12,14 @@ export default defineConfig({
     plugins: [
       VitePWA({
         strategies: "generateSW",
-        registerType: "autoUpdate",
+        registerType: "prompt",
         injectRegister: null,
         filename: "sw.js",
         devOptions: { enabled: false },
         workbox: {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
-          skipWaiting: true,
+          skipWaiting: false,
           navigateFallback: "/",
           navigateFallbackDenylist: [/^\/~oauth(?:\/|$)/, /^\/api(?:\/|$)/],
           runtimeCaching: [
