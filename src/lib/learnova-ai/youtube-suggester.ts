@@ -21,7 +21,12 @@ function looksDescriptive(title: string): boolean {
   // nothing else isn't a topic; it's a filename. A query built from one
   // means nothing to YouTube's own search relevance.
   if (/^[a-z]{2,14}\s*\d{0,4}$/i.test(cleaned)) return false;
-  if (/^(test|notes?|tutorial|tut|assignment|past\s*paper|exam|quiz|worksheet|handout|lecture)\s*\d*$/i.test(cleaned)) return false;
+  if (
+    /^(test|notes?|tutorial|tut|assignment|past\s*paper|exam|quiz|worksheet|handout|lecture)\s*\d*$/i.test(
+      cleaned,
+    )
+  )
+    return false;
   return true;
 }
 
@@ -40,6 +45,7 @@ function buildSearchQueries(material: MaterialInfo, text?: string | null): strin
   const domains = source ? detectDomain(source) : [];
   const formulas = source ? extractFormulas(source) : [];
   const level = "university";
+  const topicPhrase = topics.slice(0, 2).join(" ");
 
   // Highest-signal queries first — bestYoutubeQuery() only ever uses the
   // first one, so the ordering here is not cosmetic. Course + the
@@ -47,24 +53,31 @@ function buildSearchQueries(material: MaterialInfo, text?: string | null): strin
   // "the budget constraint" doesn't surface a random popular "slope"
   // video that merely shares one keyword with it.
   if (material.courseTitle && topics.length > 0) {
-    queries.push(`${material.courseTitle} ${topics[0]} ${level} lecture`);
+    queries.push(`${material.courseTitle} ${topicPhrase} ${level} lecture`);
   }
   if (material.course_code && topics.length > 0) {
-    queries.push(`${material.course_code} ${topics[0]}`);
+    queries.push(`${material.course_code} ${topicPhrase}`);
   }
   if (topics.length > 0) {
-    queries.push(`${topics[0]} ${level} lecture explained`);
+    queries.push(`${topicPhrase} ${level} lecture explained`);
   }
 
   // Domain-specific framing — now actually reachable, since `source`
   // above no longer requires a full document dump to populate.
-  if (domains.includes("mathematics") && keywords.length > 0) queries.push(`${keywords.slice(0, 2).join(" ")} worked example`);
-  if (domains.includes("mathematics") && formulas.length > 0) queries.push(`${formulas[0].raw} explained`);
-  if (domains.includes("physics") && topics.length > 0) queries.push(`${topics[0]} physics demonstration`);
-  if (domains.includes("chemistry") && topics.length > 0) queries.push(`${topics[0]} chemistry experiment`);
-  if (domains.includes("biology") && topics.length > 0) queries.push(`${topics[0]} biology animation`);
-  if (domains.includes("computer_science") && keywords.length > 0) queries.push(`${keywords.slice(0, 2).join(" ")} programming tutorial`);
-  if (domains.includes("economics") && topics.length > 0) queries.push(`${topics[0]} economics explained`);
+  if (domains.includes("mathematics") && keywords.length > 0)
+    queries.push(`${keywords.slice(0, 2).join(" ")} worked example`);
+  if (domains.includes("mathematics") && formulas.length > 0)
+    queries.push(`${formulas[0].raw} explained`);
+  if (domains.includes("physics") && topics.length > 0)
+    queries.push(`${topics[0]} physics demonstration`);
+  if (domains.includes("chemistry") && topics.length > 0)
+    queries.push(`${topics[0]} chemistry experiment`);
+  if (domains.includes("biology") && topics.length > 0)
+    queries.push(`${topics[0]} biology animation`);
+  if (domains.includes("computer_science") && keywords.length > 0)
+    queries.push(`${keywords.slice(0, 2).join(" ")} programming tutorial`);
+  if (domains.includes("economics") && topics.length > 0)
+    queries.push(`${topics[0]} economics explained`);
 
   // Keyword-only fallback — still at least two real terms together, so
   // one generic word alone (e.g. "slope") can never be the whole query.
@@ -93,21 +106,29 @@ function buildSearchQueries(material: MaterialInfo, text?: string | null): strin
   return [...new Set(queries)].filter((q) => q.trim().length > 3);
 }
 
-export function suggestYoutubeVideos(material: MaterialInfo, options: { limit?: number } = {}): YoutubeSuggestion[] {
+export function suggestYoutubeVideos(
+  material: MaterialInfo,
+  options: { limit?: number } = {},
+): YoutubeSuggestion[] {
   const { limit = 8 } = options;
   if (!material) return [];
   const queries = buildSearchQueries(material, material.text);
   return queries.slice(0, limit).map((query) => ({
-    url: buildYoutubeSearchUrl(query), title: formatTitle(query), query,
+    url: buildYoutubeSearchUrl(query),
+    title: formatTitle(query),
+    query,
   }));
 }
 
 function formatTitle(query: string): string {
-  return query.split(" ").map((word) => {
-    const small = ["the","of","in","on","at","to","for","and","or","a","an"];
-    if (small.includes(word.toLowerCase())) return word.toLowerCase();
-    return word.charAt(0).toUpperCase() + word.slice(1);
-  }).join(" ");
+  return query
+    .split(" ")
+    .map((word) => {
+      const small = ["the", "of", "in", "on", "at", "to", "for", "and", "or", "a", "an"];
+      if (small.includes(word.toLowerCase())) return word.toLowerCase();
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
 }
 
 export function bestYoutubeQuery(material: MaterialInfo): string | null {

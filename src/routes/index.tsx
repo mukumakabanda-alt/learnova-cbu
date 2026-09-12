@@ -12,7 +12,11 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Learnova — Study smarter at CBU" },
-      { name: "description", content: "Find course notes, past papers, summaries and revision tools built for Copperbelt University students. Independent. Fast. Free to browse." },
+      {
+        name: "description",
+        content:
+          "Find course notes, past papers, summaries and revision tools built for Copperbelt University students. Independent. Fast. Free to browse.",
+      },
       { property: "og:title", content: "Learnova — Study smarter at CBU" },
       { property: "og:url", content: "/" },
     ],
@@ -39,7 +43,10 @@ function Home() {
   const courseCountByProgramme = new Map<string, number>();
   for (const c of courses ?? []) {
     if (!c.programme_code) continue;
-    courseCountByProgramme.set(c.programme_code, (courseCountByProgramme.get(c.programme_code) ?? 0) + 1);
+    courseCountByProgramme.set(
+      c.programme_code,
+      (courseCountByProgramme.get(c.programme_code) ?? 0) + 1,
+    );
   }
 
   // Own programme first — everyone else's programme still gets browsed
@@ -62,15 +69,23 @@ function Home() {
       <HeroImageStrip />
 
       {/* HEADLINE + SEARCH — quiet, centered, plenty of breathing room */}
-      <section className="mx-auto max-w-3xl px-4 pb-4 pt-10 text-center sm:px-6 sm:pt-14">
-        <h1 className="font-display text-4xl leading-[1.05] tracking-tight text-foreground sm:text-6xl">
-          Study smarter at <span className="text-gradient-gold">CBU.</span>
-        </h1>
-        <p className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg">
-          Find notes, past papers, summaries, and revision tools in seconds.
-        </p>
-        <div className="mx-auto mt-10 max-w-xl">
-          <SearchBar />
+      <section className="relative mx-auto mt-2 max-w-4xl overflow-hidden rounded-[2rem] px-4 pb-8 pt-10 text-center sm:px-10 sm:pb-10 sm:pt-14">
+        <div className="pointer-events-none absolute -left-24 top-0 h-56 w-56 rounded-full bg-gold/10 blur-3xl" />
+        <div className="pointer-events-none absolute -right-24 bottom-0 h-64 w-64 rounded-full bg-teal/10 blur-3xl" />
+        <div className="relative">
+          <div className="mb-4 text-[11px] font-semibold uppercase tracking-[0.28em] text-copper">
+            Your CBU study space
+          </div>
+          <h1 className="font-display text-4xl leading-[1.05] tracking-tight text-foreground sm:text-6xl">
+            Find your next <span className="text-gradient-gold">breakthrough.</span>
+          </h1>
+          <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+            A calmer way to find course material, understand difficult topics, and keep the right
+            pages close — even when the signal disappears.
+          </p>
+          <div className="mx-auto mt-10 max-w-xl">
+            <SearchBar />
+          </div>
         </div>
       </section>
 
@@ -80,19 +95,28 @@ function Home() {
           not. Hidden entirely on a first visit. */}
       {continuing && (
         <section className="mx-auto max-w-3xl px-4 pt-16 sm:px-6 sm:pt-20">
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">Pick up where you left off</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">
+            Pick up where you left off
+          </div>
           <Link
             to="/study/$id"
             params={{ id: continuing.material.id }}
             className="group mt-4 flex items-center gap-4 rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
           >
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper"><History className="h-5 w-5" /></div>
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-copper">
+              <History className="h-5 w-5" />
+            </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-base font-semibold text-foreground">{continuing.material.title}</div>
-              <div className="truncate text-xs text-muted-foreground">{continuing.material.courses?.code ?? "General"}</div>
+              <div className="truncate text-base font-semibold text-foreground">
+                {continuing.material.title}
+              </div>
+              <div className="truncate text-xs text-muted-foreground">
+                {continuing.material.courses?.code ?? "General"}
+              </div>
             </div>
             <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-copper">
-              Resume <ArrowRight className="ml-0.5 inline h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              Resume{" "}
+              <ArrowRight className="ml-0.5 inline h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
             </span>
           </Link>
         </section>
@@ -141,12 +165,17 @@ function Home() {
         <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-28">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">Fresh</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-copper">
+                Fresh
+              </div>
               <h2 className="mt-2 font-display text-3xl leading-tight text-foreground sm:text-4xl">
                 Recently added
               </h2>
             </div>
-            <Link to="/browse" className="hidden shrink-0 items-center gap-1.5 text-sm font-semibold text-copper hover:underline sm:inline-flex">
+            <Link
+              to="/browse"
+              className="hidden shrink-0 items-center gap-1.5 text-sm font-semibold text-copper hover:underline sm:inline-flex"
+            >
               Browse all <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
@@ -161,7 +190,9 @@ function Home() {
                 <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-copper" />
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold text-foreground">{m.title}</div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{m.courses?.code ?? "General"} · {m.type}</div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {m.courses?.code ?? "General"} · {m.type}
+                  </div>
                 </div>
               </Link>
             ))}
@@ -181,25 +212,44 @@ function Home() {
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
             {hasSaved && (
               <div className="rounded-2xl border border-border bg-card p-6">
-                <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground"><Bookmark className="h-4 w-4 text-copper" /> Saved</p>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                  <Bookmark className="h-4 w-4 text-copper" /> Saved
+                </p>
                 <div className="mt-3 divide-y divide-border">
-                  {savedMaterials!.slice(0, 4).map((s) => s.materials && (
-                    <Link key={s.material_id} to="/study/$id" params={{ id: s.material_id }} className="block truncate py-2.5 text-sm text-foreground hover:text-copper">
-                      {s.materials.title}
-                    </Link>
-                  ))}
+                  {savedMaterials!.slice(0, 4).map(
+                    (s) =>
+                      s.materials && (
+                        <Link
+                          key={s.material_id}
+                          to="/study/$id"
+                          params={{ id: s.material_id }}
+                          className="block truncate py-2.5 text-sm text-foreground hover:text-copper"
+                        >
+                          {s.materials.title}
+                        </Link>
+                      ),
+                  )}
                 </div>
               </div>
             )}
             {hasDownloaded && (
               <div className="rounded-2xl border border-border bg-card p-6">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground"><Download className="h-4 w-4 text-copper" /> Downloaded</p>
-                  <Link to="/offline" className="text-xs font-semibold text-copper hover:underline">See all</Link>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                    <Download className="h-4 w-4 text-copper" /> Downloaded
+                  </p>
+                  <Link to="/offline" className="text-xs font-semibold text-copper hover:underline">
+                    See all
+                  </Link>
                 </div>
                 <div className="mt-3 divide-y divide-border">
                   {offlineItems.slice(0, 4).map((o) => (
-                    <Link key={o.material.id} to="/study/$id" params={{ id: o.material.id }} className="block truncate py-2.5 text-sm text-foreground hover:text-copper">
+                    <Link
+                      key={o.material.id}
+                      to="/study/$id"
+                      params={{ id: o.material.id }}
+                      className="block truncate py-2.5 text-sm text-foreground hover:text-copper"
+                    >
                       {o.material.title}
                     </Link>
                   ))}
@@ -213,9 +263,15 @@ function Home() {
       {/* MISSING MATERIAL REQUEST — same form used on course pages, no changes to it */}
       <section className="mx-auto max-w-2xl px-4 pt-20 sm:px-6 sm:pt-28">
         <div className="rounded-2xl border border-border bg-card p-6">
-          <p className="flex items-center gap-1.5 font-display text-xl text-foreground"><HelpCircle className="h-4 w-4 text-copper" /> Can't find something?</p>
-          <p className="mt-1 text-sm text-muted-foreground">Tell us what's missing and we'll add it.</p>
-          <div className="mt-4"><RequestMaterialForm /></div>
+          <p className="flex items-center gap-1.5 font-display text-xl text-foreground">
+            <HelpCircle className="h-4 w-4 text-copper" /> Can't find something?
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Tell us what's missing and we'll add it.
+          </p>
+          <div className="mt-4">
+            <RequestMaterialForm />
+          </div>
         </div>
       </section>
 
@@ -232,10 +288,16 @@ function Home() {
                 Create a free account for a personal dashboard tailored to your programme and year.
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
-                <Link to="/auth" className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient px-5 py-3 text-sm font-bold text-gold-foreground hover:opacity-95">
+                <Link
+                  to="/auth"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient px-5 py-3 text-sm font-bold text-gold-foreground hover:opacity-95"
+                >
                   Create free account <ArrowRight className="h-4 w-4" />
                 </Link>
-                <Link to="/browse" className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-white/5 px-5 py-3 text-sm font-semibold text-white backdrop-blur hover:bg-white/10">
+                <Link
+                  to="/browse"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-white/5 px-5 py-3 text-sm font-semibold text-white backdrop-blur hover:bg-white/10"
+                >
                   Browse programmes
                 </Link>
               </div>
@@ -248,4 +310,4 @@ function Home() {
       <MobileTabBar />
     </div>
   );
-      }
+}

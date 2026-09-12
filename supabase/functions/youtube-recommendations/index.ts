@@ -76,14 +76,29 @@ function significantTerms(query: string): string[] {
   ];
 }
 
+const QUALITY_TERMS = [
+  "lecture",
+  "explained",
+  "course",
+  "lesson",
+  "worked",
+  "example",
+  "tutorial",
+  "revision",
+  "university",
+];
+const NOISE_TERMS = ["shorts", "reaction", "prank", "meme", "gaming", "vlog"];
+
 function scoreVideo(video: { title: string; channelTitle: string }, terms: string[]): number {
   const title = video.title.toLowerCase();
   const channel = video.channelTitle.toLowerCase();
   let score = 0;
-  for (const term of terms) {
-    if (title.includes(term)) score += 1;
-    else if (channel.includes(term)) score += 0.5;
-  }
+  const titleMatches = terms.filter((term) => title.includes(term));
+  score += titleMatches.length * 2;
+  score += terms.filter((term) => channel.includes(term)).length * 0.5;
+  if (titleMatches.length >= Math.min(2, terms.length)) score += 1.5;
+  if (QUALITY_TERMS.some((term) => title.includes(term))) score += 0.75;
+  if (NOISE_TERMS.some((term) => title.includes(term))) score -= 2;
   return score;
 }
 
@@ -176,7 +191,10 @@ Deno.serve(async (req: Request) => {
           terms.length > 0
             ? `Matches ${terms.slice(0, 3).join(", ")} in the video title or channel.`
             : "Related to the selected study material.",
-        relevance: terms.length > 0 ? scoreVideo(video, terms) / Math.max(1, terms.length) : 0.5,
+        relevance:
+          terms.length > 0
+            ? Math.max(0, Math.min(1, scoreVideo(video, terms) / Math.max(3, terms.length * 2)))
+            : 0.5,
       })),
       query,
       ranking: "title-channel-term-match-v1",
