@@ -1,19 +1,59 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  FileText, Layers, ListChecks, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2,
-  Download, Maximize2, Share2, Heart, Bookmark, BookmarkCheck, WifiOff, Check, AlertTriangle, Youtube, Flame,
-  RefreshCw, Info, HelpCircle, Map as MapIcon, ClipboardCheck,
+  FileText,
+  Layers,
+  ListChecks,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Download,
+  Maximize2,
+  Share2,
+  Heart,
+  Bookmark,
+  BookmarkCheck,
+  WifiOff,
+  Check,
+  AlertTriangle,
+  Youtube,
+  Flame,
+  RefreshCw,
+  Info,
+  HelpCircle,
+  Map as MapIcon,
+  ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  useFlashcards, useQuizQuestions, useBumpStreak, useRelatedMaterials, useIncrementDownload,
-  useYoutubeRecommendations, useMaterialLikeStatus, useToggleMaterialLike,
-  useSavedMaterials, useToggleSaved, useRegenerateMaterial, type MaterialWithCourse,
+  useFlashcards,
+  useQuizQuestions,
+  useBumpStreak,
+  useRelatedMaterials,
+  useIncrementDownload,
+  useYoutubeRecommendations,
+  useMaterialLikeStatus,
+  useToggleMaterialLike,
+  useSavedMaterials,
+  useToggleSaved,
+  useRegenerateMaterial,
+  type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
-import { saveMaterialOffline, touchLastOpened, useOfflineStatus, useOnlineStatus } from "@/lib/offline";
-import { forceDownload, forceDownloadBundleAsZip, fetchFileForOffline, originalFileName } from "@/lib/document-files";
+import {
+  saveMaterialOffline,
+  touchLastOpened,
+  useOfflineStatus,
+  useOnlineStatus,
+} from "@/lib/offline";
+import {
+  forceDownload,
+  forceDownloadBundleAsZip,
+  fetchFileForOffline,
+  originalFileName,
+} from "@/lib/document-files";
 import { extractDocumentText } from "@/lib/document-text";
 import { DocumentViewer, InlineDocumentPreview } from "@/components/DocumentViewer";
 import { LearnovaAI } from "@/lib/learnova-ai";
@@ -113,7 +153,10 @@ export function StudyPanel({
     excludeId: material.id,
     limit: 4,
   });
-  const popularInCourse = useRelatedMaterials(material.course_code, { excludeId: material.id, limit: 4 });
+  const popularInCourse = useRelatedMaterials(material.course_code, {
+    excludeId: material.id,
+    limit: 4,
+  });
 
   // A smarter, domain-aware search query — built by the local Learnova AI
   // engine from the material's course, tags and type (see
@@ -125,7 +168,7 @@ export function StudyPanel({
   // simpler course+tags string only if the AI engine has nothing better.
   const videoQuery =
     material.status === "ready"
-      ? LearnovaAI.bestYoutubeQuery({
+      ? (LearnovaAI.bestYoutubeQuery({
           id: material.id,
           title: material.title,
           summary: material.summary,
@@ -134,7 +177,11 @@ export function StudyPanel({
           type: material.type,
           course_code: material.course_code,
           courseTitle: material.courses?.title,
-        }) ?? ([material.courses?.title, ...(material.tags ?? []).slice(0, 2)].filter(Boolean).join(" ") || material.title)
+        }) ??
+        ([material.courses?.title, ...(material.tags ?? []).slice(0, 2)]
+          .filter(Boolean)
+          .join(" ") ||
+          material.title))
       : null;
   const recommendedVideos = useYoutubeRecommendations(videoQuery);
 
@@ -207,7 +254,13 @@ export function StudyPanel({
       // Feeds the local Learnova AI student-memory system so "documents
       // downloaded" on the dashboard is accurate — see
       // src/lib/student-profile.ts.
-      if (user) saveStudentProfile(LearnovaAI.recordDownload(loadStudentProfile(user.id, user.email ?? "Student"), material.id));
+      if (user)
+        saveStudentProfile(
+          LearnovaAI.recordDownload(
+            loadStudentProfile(user.id, user.email ?? "Student"),
+            material.id,
+          ),
+        );
     } catch {
       toast.error("Couldn't download that file right now — try again in a moment.");
     } finally {
@@ -236,7 +289,11 @@ export function StudyPanel({
     const url = `${window.location.origin}/study/${material.id}`;
     if (navigator.share) {
       try {
-        await navigator.share({ title: material.title, text: `Check out "${material.title}" on Learnova`, url });
+        await navigator.share({
+          title: material.title,
+          text: `Check out "${material.title}" on Learnova`,
+          url,
+        });
       } catch {
         // The person cancelled the native share sheet — not a real error.
       }
@@ -271,7 +328,12 @@ export function StudyPanel({
   // "weak topics" / "strong topics" / quiz score on the dashboard. Stored
   // on-device (localStorage, see src/lib/student-profile.ts) since
   // there's no server-side table for it yet.
-  function handleQuizSubmitted(score: number, total: number, weakQuestions: string[], timeSpentSeconds: number) {
+  function handleQuizSubmitted(
+    score: number,
+    total: number,
+    weakQuestions: string[],
+    timeSpentSeconds: number,
+  ) {
     if (!user) return;
     const profile = loadStudentProfile(user.id, user.email ?? "Student");
     const updated = LearnovaAI.recordQuizAttempt(profile, {
@@ -312,13 +374,25 @@ export function StudyPanel({
       const file = new File([fetched.blob], filename, { type: fetched.mime });
       const { text, quality, confidence, model } = await extractDocumentText(file);
       if (quality === "none" || !text.trim() || confidence < 0.5) {
-        toast.error("Study tools aren't available because this file couldn't be read with enough confidence.");
+        toast.error(
+          "Study tools aren't available because this file couldn't be read with enough confidence.",
+        );
         return;
       }
-      await regenerateMutation.mutateAsync({ materialId: material.id, text, title: material.title, confidence, documentModel: model });
+      await regenerateMutation.mutateAsync({
+        materialId: material.id,
+        text,
+        title: material.title,
+        confidence,
+        documentModel: model,
+      });
       toast.success("Regenerating — this page updates itself as it finishes.");
     } catch (e) {
-      toast.error(e instanceof Error && e.message ? e.message : "Couldn't restart generation right now — try again in a moment.");
+      toast.error(
+        e instanceof Error && e.message
+          ? e.message
+          : "Couldn't restart generation right now — try again in a moment.",
+      );
     } finally {
       setRegeneratingLocally(false);
     }
@@ -330,19 +404,37 @@ export function StudyPanel({
   const summaryStatus: StageStatus = material.summary_status ?? "ready";
   const flashcardsStatus: StageStatus = material.flashcards_status ?? "ready";
   const quizStatus: StageStatus = material.quiz_status ?? "ready";
-  const anyStageFailed = summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
+  const anyStageFailed =
+    summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
   const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
   const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path && isAdmin;
   const kind = materialKindOf(material.type);
-  const TABS = kind === "past-paper" ? PAST_PAPER_TABS : kind === "outline" ? OUTLINE_TABS : kind === "assignment" ? ASSIGNMENT_TABS : STANDARD_TABS;
-  const kitLabel = kind === "past-paper" ? "Questions & answers" : kind === "outline" ? "Key topics" : "Requirements";
+  const TABS =
+    kind === "past-paper"
+      ? PAST_PAPER_TABS
+      : kind === "outline"
+        ? OUTLINE_TABS
+        : kind === "assignment"
+          ? ASSIGNMENT_TABS
+          : STANDARD_TABS;
+  const kitLabel =
+    kind === "past-paper"
+      ? "Questions & answers"
+      : kind === "outline"
+        ? "Key topics"
+        : "Requirements";
 
   return (
     <div>
       {/* PREVIEW — first thing on the page now, no tap required to see it. */}
       <div className="mb-4">
-        <InlineDocumentPreview materialId={material.id} filePath={material.file_path} title={material.title} extraFilePaths={material.extra_file_paths} />
+        <InlineDocumentPreview
+          materialId={material.id}
+          filePath={material.file_path}
+          title={material.title}
+          extraFilePaths={material.extra_file_paths}
+        />
       </div>
 
       {/* Actions row: quiet by default, only shows what applies. Shown
@@ -362,7 +454,11 @@ export function StudyPanel({
               onClick={downloaded ? handleRemoveDownload : handleDownload}
               disabled={downloading || removingOffline}
               className={`${pillBtn} ${downloaded ? "border-teal/40 bg-teal/10 text-teal hover:bg-teal/10" : ""}`}
-              title={downloaded ? "Downloaded — opens with zero signal. Tap to remove." : "Download — saves to your device and your offline Library"}
+              title={
+                downloaded
+                  ? "Downloaded — opens with zero signal. Tap to remove."
+                  : "Download — saves to your device and your offline Library"
+              }
             >
               {downloading || removingOffline ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -380,7 +476,11 @@ export function StudyPanel({
           disabled={toggleSaved.isPending}
           className={`${pillBtn} ${isSaved ? "border-primary/40 bg-primary/10 text-copper hover:bg-primary/10" : ""}`}
         >
-          {isSaved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+          {isSaved ? (
+            <BookmarkCheck className="h-3.5 w-3.5" />
+          ) : (
+            <Bookmark className="h-3.5 w-3.5" />
+          )}
           {isSaved ? "Saved" : "Save"}
         </button>
         <button onClick={handleShare} className={pillBtn}>
@@ -409,7 +509,8 @@ export function StudyPanel({
             className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper"
             title={material.content_confidence_note ?? undefined}
           >
-            <Info className="h-3.5 w-3.5" /> {material.content_confidence_note ?? "This may be missing some details"}
+            <Info className="h-3.5 w-3.5" />{" "}
+            {material.content_confidence_note ?? "This may be missing some details"}
           </span>
         )}
       </div>
@@ -418,9 +519,12 @@ export function StudyPanel({
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card p-8 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <div className="text-sm font-semibold text-foreground">Generating your study tools…</div>
-          <div className="text-xs text-muted-foreground">Reading, organizing, and grounding the document…</div>
+          <div className="text-xs text-muted-foreground">
+            Reading, organizing, and grounding the document…
+          </div>
           <p className="max-w-xs text-xs text-muted-foreground">
-            This page updates itself as each part finishes — no need to refresh. The file above is already yours to view or download in the meantime.
+            This page updates itself as each part finishes — no need to refresh. The file above is
+            already yours to view or download in the meantime.
           </p>
         </div>
       ) : isFailed ? (
@@ -433,24 +537,44 @@ export function StudyPanel({
           )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {canRegenerate ? (
-              <button onClick={handleRegenerate} disabled={regenerating || !isOnline} className={pillBtn}>
+              <button
+                onClick={handleRegenerate}
+                disabled={regenerating || !isOnline}
+                className={pillBtn}
+              >
                 <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} />
-                {regenerating ? "Regenerating…" : !isOnline ? "Regenerate (needs internet)" : "Regenerate"}
+                {regenerating
+                  ? "Regenerating…"
+                  : !isOnline
+                    ? "Regenerate (needs internet)"
+                    : "Regenerate"}
               </button>
             ) : (
-              <span className="text-xs text-muted-foreground">Try re-uploading it, or request it and an admin will take a look.</span>
+              <span className="text-xs text-muted-foreground">
+                Try re-uploading it, or request it and an admin will take a look.
+              </span>
             )}
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">The file itself is safe either way — view or download it above.</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            The file itself is safe either way — view or download it above.
+          </p>
         </div>
       ) : (
         <>
           {isLocalFallback && (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-copper/30 bg-copper/10 px-3 py-2 text-xs font-medium text-copper">
-              <span>These study tools came from a lighter local version — the full AI pipeline didn't respond when this was generated.</span>
+              <span>
+                These study tools came from a lighter local version — the full AI pipeline didn't
+                respond when this was generated.
+              </span>
               {canRegenerate && (
-                <button onClick={handleRegenerate} disabled={regenerating || !isOnline} className="inline-flex shrink-0 items-center gap-1 font-semibold disabled:opacity-50">
-                  <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> {regenerating ? "Regenerating…" : "Regenerate with AI"}
+                <button
+                  onClick={handleRegenerate}
+                  disabled={regenerating || !isOnline}
+                  className="inline-flex shrink-0 items-center gap-1 font-semibold disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} />{" "}
+                  {regenerating ? "Regenerating…" : "Regenerate with AI"}
                 </button>
               )}
             </div>
@@ -458,13 +582,31 @@ export function StudyPanel({
           {anyStageFailed && !isLocalFallback && (
             <div className="mb-4 space-y-1.5">
               {summaryStatus === "failed" && (
-                <StageRow label="Summary" status="failed" error={material.summary_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+                <StageRow
+                  label="Summary"
+                  status="failed"
+                  error={material.summary_error}
+                  onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                  regenerating={regenerating}
+                />
               )}
               {flashcardsStatus === "failed" && (
-                <StageRow label="Flashcards" status="failed" error={material.flashcards_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+                <StageRow
+                  label="Flashcards"
+                  status="failed"
+                  error={material.flashcards_error}
+                  onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                  regenerating={regenerating}
+                />
               )}
               {quizStatus === "failed" && (
-                <StageRow label="Quiz" status="failed" error={material.quiz_error} onRegenerate={canRegenerate ? handleRegenerate : undefined} regenerating={regenerating} />
+                <StageRow
+                  label="Quiz"
+                  status="failed"
+                  error={material.quiz_error}
+                  onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                  regenerating={regenerating}
+                />
               )}
             </div>
           )}
@@ -483,7 +625,9 @@ export function StudyPanel({
                     transition={{ type: "spring", stiffness: 500, damping: 35 }}
                   />
                 )}
-                <span className={`relative z-10 flex items-center gap-1.5 ${tab === t.id ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                <span
+                  className={`relative z-10 flex items-center gap-1.5 ${tab === t.id ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
                   <t.icon className="h-3.5 w-3.5" /> {t.label}
                 </span>
               </button>
@@ -503,7 +647,8 @@ export function StudyPanel({
                   <div className="rounded-2xl border border-border bg-card p-5 text-sm leading-relaxed text-foreground">
                     {summaryStatus === "pending" ? (
                       <span className="inline-flex items-center gap-2 text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Still generating the summary…
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Still generating the
+                        summary…
                       </span>
                     ) : summaryStatus === "failed" ? (
                       <div className="text-muted-foreground">
@@ -514,7 +659,10 @@ export function StudyPanel({
                             disabled={regenerating || !isOnline}
                             className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary disabled:opacity-50"
                           >
-                            <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} /> Regenerate
+                            <RefreshCw
+                              className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`}
+                            />{" "}
+                            Regenerate
                           </button>
                         )}
                       </div>
@@ -524,7 +672,12 @@ export function StudyPanel({
                     {material.tags && material.tags.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-1.5">
                         {material.tags.map((tag) => (
-                          <span key={tag} className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">{tag}</span>
+                          <span
+                            key={tag}
+                            className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal"
+                          >
+                            {tag}
+                          </span>
                         ))}
                       </div>
                     )}
@@ -566,7 +719,10 @@ export function StudyPanel({
           </div>
 
           {material.type === "Past Paper" && (relatedPastPapers.data?.length ?? 0) > 0 && (
-            <RelatedList title="Similar past papers for this course" items={relatedPastPapers.data ?? []} />
+            <RelatedList
+              title="Similar past papers for this course"
+              items={relatedPastPapers.data ?? []}
+            />
           )}
           {(popularInCourse.data?.length ?? 0) > 0 && (
             <RelatedList title="Popular in this course" items={popularInCourse.data ?? []} />
@@ -585,10 +741,21 @@ export function StudyPanel({
                     rel="noreferrer"
                     className="group w-44 shrink-0 overflow-hidden rounded-xl border border-border bg-card hover:border-primary/30"
                   >
-                    {v.thumbnail && <img src={v.thumbnail} alt="" className="h-24 w-full object-cover" />}
+                    {v.thumbnail && (
+                      <img src={v.thumbnail} alt="" className="h-24 w-full object-cover" />
+                    )}
                     <div className="p-2">
-                      <div className="line-clamp-2 text-[11px] font-semibold text-foreground group-hover:text-primary">{v.title}</div>
-                      <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{v.channelTitle}</div>
+                      <div className="line-clamp-2 text-[11px] font-semibold text-foreground group-hover:text-primary">
+                        {v.title}
+                      </div>
+                      <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                        {v.channelTitle}
+                      </div>
+                      {v.reason && (
+                        <div className="mt-1 line-clamp-2 text-[9px] text-muted-foreground">
+                          {v.reason}
+                        </div>
+                      )}
                     </div>
                   </a>
                 ))}
@@ -611,7 +778,11 @@ export function StudyPanel({
 }
 
 function StageRow({
-  label, status, error, onRegenerate, regenerating,
+  label,
+  status,
+  error,
+  onRegenerate,
+  regenerating,
 }: {
   label: string;
   status: StageStatus;
@@ -631,7 +802,11 @@ function StageRow({
         )}
         <span className="shrink-0 font-medium text-foreground">{label}</span>
         <span className="truncate text-muted-foreground">
-          {status === "ready" ? "Ready" : status === "failed" ? error || "Couldn't generate" : "Generating…"}
+          {status === "ready"
+            ? "Ready"
+            : status === "failed"
+              ? error || "Couldn't generate"
+              : "Generating…"}
         </span>
       </div>
       {status === "failed" && onRegenerate && (
@@ -661,10 +836,15 @@ function RelatedList({ title, items }: { title: string; items: MaterialRow[] }) 
             params={{ id: m.id }}
             className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 hover:border-primary/30"
           >
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><FileText className="h-4 w-4" /></div>
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <FileText className="h-4 w-4" />
+            </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-semibold text-foreground">{m.title}</div>
-              <div className="truncate text-[11px] text-muted-foreground">{m.type}{m.content_year ? ` · ${m.content_year}` : ""}</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {m.type}
+                {m.content_year ? ` · ${m.content_year}` : ""}
+              </div>
             </div>
           </Link>
         ))}
@@ -692,52 +872,89 @@ function StudyKitView({
   regenerating?: boolean;
 }) {
   if (!studyKit || typeof studyKit !== "object") {
-    return <FailedState label={errorHint || "This part couldn't be generated."} onRegenerate={canRegenerate ? onRegenerate : undefined} regenerating={regenerating} />;
+    return (
+      <FailedState
+        label={errorHint || "This part couldn't be generated."}
+        onRegenerate={canRegenerate ? onRegenerate : undefined}
+        regenerating={regenerating}
+      />
+    );
   }
   const kit = studyKit as Record<string, any>;
 
   if (kind === "past-paper") {
-    const questions: { number: string; text: string; marks: number | null }[] = Array.isArray(kit.questions) ? kit.questions : [];
+    const questions: { number: string; text: string; marks: number | null }[] = Array.isArray(
+      kit.questions,
+    )
+      ? kit.questions
+      : [];
     const guidanceByNumber = new Map<string, string>(
-      (Array.isArray(kit.answer_guidance) ? kit.answer_guidance : []).map((a: any) => [String(a.question_number), String(a.guidance ?? "")]),
+      (Array.isArray(kit.answer_guidance) ? kit.answer_guidance : []).map((a: any) => [
+        String(a.question_number),
+        String(a.guidance ?? ""),
+      ]),
     );
     const topics: string[] = Array.isArray(kit.topics_tested) ? kit.topics_tested : [];
-    if (questions.length === 0) return <EmptyState label="No questions extracted from this paper yet." />;
+    if (questions.length === 0)
+      return <EmptyState label="No questions extracted from this paper yet." />;
     return (
       <div className="space-y-3">
         {(topics.length > 0 || kit.difficulty) && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {kit.difficulty && <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-medium text-copper">{kit.difficulty}</span>}
+            {kit.difficulty && (
+              <span className="rounded-md bg-copper/10 px-2 py-0.5 text-[11px] font-medium text-copper">
+                {kit.difficulty}
+              </span>
+            )}
             {topics.map((t) => (
-              <span key={t} className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">{t}</span>
+              <span
+                key={t}
+                className="rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal"
+              >
+                {t}
+              </span>
             ))}
           </div>
         )}
         {questions.map((q, i) => (
-          <PastPaperQuestion key={i} question={q} guidance={guidanceByNumber.get(q.number) || null} />
+          <PastPaperQuestion
+            key={i}
+            question={q}
+            guidance={guidanceByNumber.get(q.number) || null}
+          />
         ))}
       </div>
     );
   }
 
   if (kind === "outline") {
-    const topics: { title: string; description: string }[] = Array.isArray(kit.topics) ? kit.topics : [];
+    const topics: { title: string; description: string }[] = Array.isArray(kit.topics)
+      ? kit.topics
+      : [];
     const plan: string[] = Array.isArray(kit.revision_plan) ? kit.revision_plan : [];
     const outcomes: string[] = Array.isArray(kit.learning_outcomes) ? kit.learning_outcomes : [];
-    if (topics.length === 0) return <EmptyState label="No topic list extracted from this outline yet." />;
+    if (topics.length === 0)
+      return <EmptyState label="No topic list extracted from this outline yet." />;
     return (
       <div className="space-y-5">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Topics covered</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+            Topics covered
+          </div>
           <div className="mt-3 grid gap-2">
             {topics.map((t, i) => (
-              <div key={i} className="flex items-start gap-3 rounded-xl border border-border bg-card p-3">
+              <div
+                key={i}
+                className="flex items-start gap-3 rounded-xl border border-border bg-card p-3"
+              >
                 <div className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary">
                   {String(i + 1).padStart(2, "0")}
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-foreground">{t.title}</div>
-                  {t.description && <div className="mt-0.5 text-xs text-muted-foreground">{t.description}</div>}
+                  {t.description && (
+                    <div className="mt-0.5 text-xs text-muted-foreground">{t.description}</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -745,7 +962,9 @@ function StudyKitView({
         </div>
         {plan.length > 0 && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-copper">Suggested revision order</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+              Suggested revision order
+            </div>
             <ol className="mt-3 space-y-2">
               {plan.map((s, i) => (
                 <li key={i} className="flex gap-2 text-sm text-foreground">
@@ -757,7 +976,9 @@ function StudyKitView({
         )}
         {outcomes.length > 0 && (
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-copper">You should be able to</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+              You should be able to
+            </div>
             <ul className="mt-3 space-y-1.5">
               {outcomes.map((s, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-foreground">
@@ -775,8 +996,10 @@ function StudyKitView({
   const requirements: string[] = Array.isArray(kit.requirements) ? kit.requirements : [];
   const deliverables: string[] = Array.isArray(kit.deliverables) ? kit.deliverables : [];
   const checklist: string[] = Array.isArray(kit.checklist) ? kit.checklist : [];
-  const deadlineNote: string | null = typeof kit.deadline_note === "string" ? kit.deadline_note : null;
-  if (requirements.length === 0) return <EmptyState label="No requirements extracted from this brief yet." />;
+  const deadlineNote: string | null =
+    typeof kit.deadline_note === "string" ? kit.deadline_note : null;
+  if (requirements.length === 0)
+    return <EmptyState label="No requirements extracted from this brief yet." />;
   return (
     <div className="space-y-5">
       {deadlineNote && (
@@ -785,27 +1008,39 @@ function StudyKitView({
         </div>
       )}
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-copper">Requirements</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+          Requirements
+        </div>
         <ul className="mt-3 space-y-1.5">
           {requirements.map((s, i) => (
-            <li key={i} className="text-sm text-foreground">• {s}</li>
+            <li key={i} className="text-sm text-foreground">
+              • {s}
+            </li>
           ))}
         </ul>
       </div>
       {deliverables.length > 0 && (
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Deliverables</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+            Deliverables
+          </div>
           <ul className="mt-3 space-y-1.5">
             {deliverables.map((s, i) => (
-              <li key={i} className="text-sm text-foreground">• {s}</li>
+              <li key={i} className="text-sm text-foreground">
+                • {s}
+              </li>
             ))}
           </ul>
         </div>
       )}
       {checklist.length > 0 && (
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-copper">Getting started</div>
-          <p className="mt-1 text-xs text-muted-foreground">Structure and process only — this won't write the assignment for you.</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-copper">
+            Getting started
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Structure and process only — this won't write the assignment for you.
+          </p>
           <div className="mt-3 space-y-2">
             {checklist.map((s, i) => (
               <ChecklistItem key={i} text={s} />
@@ -835,17 +1070,24 @@ function PastPaperQuestion({
           Q{question.number}. {question.text}
         </div>
         {question.marks != null && (
-          <span className="shrink-0 rounded-md bg-surface-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{question.marks} marks</span>
+          <span className="shrink-0 rounded-md bg-surface-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {question.marks} marks
+          </span>
         )}
       </div>
       {guidance &&
         (revealed ? (
           <div className="mt-3 rounded-xl border border-teal/20 bg-teal/5 p-3 text-sm text-foreground">
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-teal">Answer guidance</div>
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-teal">
+              Answer guidance
+            </div>
             {guidance}
           </div>
         ) : (
-          <button onClick={() => setRevealed(true)} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+          <button
+            onClick={() => setRevealed(true)}
+            className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary"
+          >
             <HelpCircle className="h-3.5 w-3.5" /> Reveal answer guidance
           </button>
         ))}
@@ -862,10 +1104,14 @@ function ChecklistItem({ text }: { text: string }) {
     <button
       onClick={() => setDone((d) => !d)}
       className={`flex w-full items-start gap-2.5 rounded-xl border p-3 text-left text-sm transition-colors ${
-        done ? "border-teal/40 bg-teal/5 text-muted-foreground line-through" : "border-border bg-card text-foreground"
+        done
+          ? "border-teal/40 bg-teal/5 text-muted-foreground line-through"
+          : "border-border bg-card text-foreground"
       }`}
     >
-      <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${done ? "border-teal bg-teal text-white" : "border-border"}`}>
+      <span
+        className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${done ? "border-teal bg-teal text-white" : "border-border"}`}
+      >
         {done && <Check className="h-3 w-3" />}
       </span>
       {text}
@@ -874,7 +1120,12 @@ function ChecklistItem({ text }: { text: string }) {
 }
 
 function FlashcardDeck({
-  materialId, initialCards, status, error, onRegenerate, regenerating,
+  materialId,
+  initialCards,
+  status,
+  error,
+  onRegenerate,
+  regenerating,
 }: {
   materialId: string;
   initialCards?: FlashcardRow[];
@@ -894,7 +1145,14 @@ function FlashcardDeck({
   if (shouldFetch && isLoading) return <SkeletonCard />;
   if (!cards?.length) {
     if (status === "pending") return <PendingState label="Flashcards are still generating…" />;
-    if (status === "failed") return <FailedState label={error || "Flashcards couldn't be generated."} onRegenerate={onRegenerate} regenerating={regenerating} />;
+    if (status === "failed")
+      return (
+        <FailedState
+          label={error || "Flashcards couldn't be generated."}
+          onRegenerate={onRegenerate}
+          regenerating={regenerating}
+        />
+      );
     return <EmptyState label="No flashcards for this one yet." />;
   }
 
@@ -930,10 +1188,14 @@ function FlashcardDeck({
                   transition={{ duration: 0.22 }}
                   className="flex flex-col items-center gap-3"
                 >
-                  <span className={`text-[11px] font-semibold uppercase tracking-wide ${flipped ? "text-teal" : "text-copper"}`}>
+                  <span
+                    className={`text-[11px] font-semibold uppercase tracking-wide ${flipped ? "text-teal" : "text-copper"}`}
+                  >
                     {flipped ? "Answer" : "Question"}
                   </span>
-                  <p className="text-base font-medium text-foreground">{flipped ? card.answer : card.question}</p>
+                  <p className="text-base font-medium text-foreground">
+                    {flipped ? card.answer : card.question}
+                  </p>
                 </motion.div>
               </AnimatePresence>
               <span className="text-xs text-muted-foreground">Tap to flip</span>
@@ -942,9 +1204,21 @@ function FlashcardDeck({
         </AnimatePresence>
       </div>
       <div className="mt-4 flex items-center justify-between">
-        <button onClick={() => go(-1)} className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
-        <span className="text-xs text-muted-foreground">{i + 1} / {cards.length}</span>
-        <button onClick={() => go(1)} className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
+        <button
+          onClick={() => go(-1)}
+          className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-muted"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="text-xs text-muted-foreground">
+          {i + 1} / {cards.length}
+        </span>
+        <button
+          onClick={() => go(1)}
+          className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface text-foreground hover:bg-muted"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );
@@ -962,7 +1236,12 @@ function Quiz({
   materialId: string;
   initialQuestions?: QuizRow[];
   /** Called once, right when "Check answers" is tapped — feeds the local Learnova AI student-memory system. */
-  onSubmit?: (score: number, total: number, weakQuestions: string[], timeSpentSeconds: number) => void;
+  onSubmit?: (
+    score: number,
+    total: number,
+    weakQuestions: string[],
+    timeSpentSeconds: number,
+  ) => void;
   status?: StageStatus;
   error?: string | null;
   onRegenerate?: () => void;
@@ -979,7 +1258,14 @@ function Quiz({
   if (shouldFetch && isLoading) return <SkeletonCard />;
   if (!questions?.length) {
     if (status === "pending") return <PendingState label="The quiz is still generating…" />;
-    if (status === "failed") return <FailedState label={error || "The quiz couldn't be generated."} onRegenerate={onRegenerate} regenerating={regenerating} />;
+    if (status === "failed")
+      return (
+        <FailedState
+          label={error || "The quiz couldn't be generated."}
+          onRegenerate={onRegenerate}
+          regenerating={regenerating}
+        />
+      );
     return <EmptyState label="No quiz for this one yet." />;
   }
 
@@ -1005,7 +1291,9 @@ function Quiz({
           transition={{ duration: 0.25, delay: Math.min(qi * 0.05, 0.4) }}
           className="rounded-2xl border border-border bg-card p-4"
         >
-          <div className="text-sm font-semibold text-foreground">{qi + 1}. {q.question}</div>
+          <div className="text-sm font-semibold text-foreground">
+            {qi + 1}. {q.question}
+          </div>
           <div className="mt-3 grid gap-2">
             {q.options.map((opt, oi) => {
               const picked = answers[q.id] === oi;
@@ -1018,26 +1306,35 @@ function Quiz({
                   disabled={submitted}
                   onClick={() => setAnswers((a) => ({ ...a, [q.id]: oi }))}
                   className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${
-                    isCorrect ? "border-teal/50 bg-teal/10 text-foreground"
-                    : isWrongPick ? "border-destructive/50 bg-destructive/10 text-foreground"
-                    : picked ? "border-primary/50 bg-primary/10 text-foreground"
-                    : "border-border bg-surface text-muted-foreground hover:text-foreground"
+                    isCorrect
+                      ? "border-teal/50 bg-teal/10 text-foreground"
+                      : isWrongPick
+                        ? "border-destructive/50 bg-destructive/10 text-foreground"
+                        : picked
+                          ? "border-primary/50 bg-primary/10 text-foreground"
+                          : "border-border bg-surface text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {opt}
                   <AnimatePresence>
                     {isCorrect && (
-                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}><CheckCircle2 className="h-4 w-4 text-teal" /></motion.span>
+                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}>
+                        <CheckCircle2 className="h-4 w-4 text-teal" />
+                      </motion.span>
                     )}
                     {isWrongPick && (
-                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}><XCircle className="h-4 w-4 text-destructive" /></motion.span>
+                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}>
+                        <XCircle className="h-4 w-4 text-destructive" />
+                      </motion.span>
                     )}
                   </AnimatePresence>
                 </motion.button>
               );
             })}
           </div>
-          {submitted && q.explanation && <p className="mt-2 text-xs text-muted-foreground">{q.explanation}</p>}
+          {submitted && q.explanation && (
+            <p className="mt-2 text-xs text-muted-foreground">{q.explanation}</p>
+          )}
         </motion.div>
       ))}
       {!submitted ? (
@@ -1066,7 +1363,11 @@ function SkeletonCard() {
   return <div className="h-40 animate-pulse rounded-2xl border border-border bg-surface-muted" />;
 }
 function EmptyState({ label }: { label: string }) {
-  return <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">{label}</div>;
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">
+      {label}
+    </div>
+  );
 }
 function PendingState({ label }: { label: string }) {
   return (
@@ -1075,7 +1376,15 @@ function PendingState({ label }: { label: string }) {
     </div>
   );
 }
-function FailedState({ label, onRegenerate, regenerating }: { label: string; onRegenerate?: () => void; regenerating?: boolean }) {
+function FailedState({
+  label,
+  onRegenerate,
+  regenerating,
+}: {
+  label: string;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
+}) {
   return (
     <div className="rounded-2xl border border-dashed border-border bg-surface-muted p-8 text-center text-sm text-muted-foreground">
       <p>{label}</p>
@@ -1085,7 +1394,8 @@ function FailedState({ label, onRegenerate, regenerating }: { label: string; onR
           disabled={regenerating}
           className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} /> {regenerating ? "Regenerating…" : "Regenerate"}
+          <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} />{" "}
+          {regenerating ? "Regenerating…" : "Regenerate"}
         </button>
       )}
     </div>

@@ -26,19 +26,54 @@ const MAX_RESULTS = 6;
 // their own. Scoring on these would let a video match just by having
 // "tutorial" in the title regardless of subject, which defeats the point.
 const SCAFFOLD_WORDS = new Set([
-  "university", "lecture", "explained", "tutorial", "example", "examples",
-  "demonstration", "experiment", "animation", "derivation", "solution",
-  "worked", "formula", "programming", "code", "real", "world", "past", "paper",
+  "university",
+  "lecture",
+  "explained",
+  "tutorial",
+  "example",
+  "examples",
+  "demonstration",
+  "experiment",
+  "animation",
+  "derivation",
+  "solution",
+  "worked",
+  "formula",
+  "programming",
+  "code",
+  "real",
+  "world",
+  "past",
+  "paper",
 ]);
-const STOPWORDS = new Set(["a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "is", "are", "with", "by", "from"]);
+const STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "of",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "and",
+  "or",
+  "is",
+  "are",
+  "with",
+  "by",
+  "from",
+]);
 
 function significantTerms(query: string): string[] {
-  return [...new Set(
-    query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2 && !STOPWORDS.has(w) && !SCAFFOLD_WORDS.has(w)),
-  )];
+  return [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 2 && !STOPWORDS.has(w) && !SCAFFOLD_WORDS.has(w)),
+    ),
+  ];
 }
 
 function scoreVideo(video: { title: string; channelTitle: string }, terms: string[]): number {
@@ -62,7 +97,11 @@ type YoutubeVideo = {
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=900",
+    },
   });
 }
 
@@ -91,7 +130,9 @@ Deno.serve(async (req: Request) => {
       key: apiKey,
     });
 
-    const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+    const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`, {
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!res.ok) {
       console.error("YouTube API error", res.status, await res.text());
       return jsonResponse({ videos: [] as YoutubeVideo[] });
@@ -104,7 +145,8 @@ Deno.serve(async (req: Request) => {
         videoId: item.id.videoId,
         title: item.snippet?.title ?? "Untitled",
         channelTitle: item.snippet?.channelTitle ?? "",
-        thumbnail: item.snippet?.thumbnails?.medium?.url ?? item.snippet?.thumbnails?.default?.url ?? null,
+        thumbnail:
+          item.snippet?.thumbnails?.medium?.url ?? item.snippet?.thumbnails?.default?.url ?? null,
       }));
 
     // YouTube's own relevance ranking for a short, scoped query still
@@ -120,11 +162,25 @@ Deno.serve(async (req: Request) => {
       const scored = videos.map((v) => ({ v, score: scoreVideo(v, terms) }));
       const anyMatch = scored.some((s) => s.score > 0);
       ranked = anyMatch
-        ? scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).map((s) => s.v)
+        ? scored
+            .filter((s) => s.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .map((s) => s.v)
         : []; // Nothing matched anything real — better to show no section than a wrong one.
     }
 
-    return jsonResponse({ videos: ranked.slice(0, MAX_RESULTS) });
+    return jsonResponse({
+      videos: ranked.slice(0, MAX_RESULTS).map((video) => ({
+        ...video,
+        reason:
+          terms.length > 0
+            ? `Matches ${terms.slice(0, 3).join(", ")} in the video title or channel.`
+            : "Related to the selected study material.",
+        relevance: terms.length > 0 ? scoreVideo(video, terms) / Math.max(1, terms.length) : 0.5,
+      })),
+      query,
+      ranking: "title-channel-term-match-v1",
+    });
   } catch (error) {
     console.error(error);
     // Soft-fail here too — see file header.

@@ -15,7 +15,9 @@ type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 type UserRoleRow = Database["public"]["Tables"]["user_roles"]["Row"];
 type HeroSlideRow = Database["public"]["Tables"]["hero_slides"]["Row"];
 
-export type CourseWithProgramme = CourseRow & { programmes: { name: string; school: string } | null };
+export type CourseWithProgramme = CourseRow & {
+  programmes: { name: string; school: string } | null;
+};
 export type MaterialWithCourse = MaterialRow & {
   courses: { title: string; code: string; programme_code?: string | null } | null;
   uploader?: { full_name: string } | null;
@@ -29,7 +31,11 @@ export function useProgrammes() {
   return useQuery({
     queryKey: ["programmes"],
     queryFn: async (): Promise<ProgrammeRow[]> => {
-      const { data, error } = await supabase.from("programmes").select("*").neq("code", "ADMIN").order("name");
+      const { data, error } = await supabase
+        .from("programmes")
+        .select("*")
+        .neq("code", "ADMIN")
+        .order("name");
       if (error) throw error;
       return (data ?? []) as ProgrammeRow[];
     },
@@ -40,7 +46,13 @@ export function useProgrammes() {
 export function useCreateProgramme() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { code: string; name: string; school: string; description?: string; durationYears: number }) => {
+    mutationFn: async (input: {
+      code: string;
+      name: string;
+      school: string;
+      description?: string;
+      durationYears: number;
+    }) => {
       const { error } = await supabase.from("programmes").insert({
         code: input.code.trim().toUpperCase(),
         name: input.name.trim(),
@@ -57,11 +69,20 @@ export function useCreateProgramme() {
 export function useUpdateProgramme() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { code: string; name?: string; school?: string; description?: string; durationYears?: number }) => {
+    mutationFn: async (input: {
+      code: string;
+      name?: string;
+      school?: string;
+      description?: string;
+      durationYears?: number;
+    }) => {
       const { code, durationYears, ...rest } = input;
       const { error } = await supabase
         .from("programmes")
-        .update({ ...rest, ...(durationYears !== undefined ? { duration_years: durationYears } : {}) })
+        .update({
+          ...rest,
+          ...(durationYears !== undefined ? { duration_years: durationYears } : {}),
+        })
         .eq("code", code);
       if (error) throw error;
     },
@@ -86,7 +107,11 @@ export function useDeleteProgramme() {
   });
 }
 
-export function useCourses(filters?: { programmeCode?: string | null; year?: number | null; enabled?: boolean }) {
+export function useCourses(filters?: {
+  programmeCode?: string | null;
+  year?: number | null;
+  enabled?: boolean;
+}) {
   return useQuery({
     queryKey: ["courses", filters?.programmeCode ?? null, filters?.year ?? null],
     queryFn: async (): Promise<CourseWithProgramme[]> => {
@@ -132,7 +157,13 @@ export function useSearchCourses(query: string) {
       if (!needle) return all;
 
       return all.filter((c) => {
-        const haystacks = [c.code, c.title, c.lecturer ?? "", c.description ?? "", ...(c.topics ?? [])];
+        const haystacks = [
+          c.code,
+          c.title,
+          c.lecturer ?? "",
+          c.description ?? "",
+          ...(c.topics ?? []),
+        ];
         return haystacks.some((h) => h.toLowerCase().includes(needle));
       });
     },
@@ -153,7 +184,9 @@ export function useUniversalSearch(query: string, programmeCode?: string | null)
         supabase.from("courses").select("*, programmes(name, school)").order("code"),
         supabase
           .from("materials")
-          .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+          .select(
+            "*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)",
+          )
           .in("status", ["ready", "processing", "catalog_only"])
           .order("created_at", { ascending: false }),
         supabase.from("programmes").select("*").neq("code", "ADMIN").order("name"),
@@ -162,12 +195,17 @@ export function useUniversalSearch(query: string, programmeCode?: string | null)
       if (materialsRes.error) throw materialsRes.error;
       if (programmesRes.error) throw programmesRes.error;
 
-      const allCourses = ((coursesRes.data ?? []) as CourseWithProgramme[]).filter((c) => !programmeCode || c.programme_code === programmeCode);
-      const allMaterials = ((materialsRes.data ?? []) as MaterialWithCourse[]).filter((m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode);
+      const allCourses = ((coursesRes.data ?? []) as CourseWithProgramme[]).filter(
+        (c) => !programmeCode || c.programme_code === programmeCode,
+      );
+      const allMaterials = ((materialsRes.data ?? []) as MaterialWithCourse[]).filter(
+        (m) => !programmeCode || !m.course_code || m.courses?.programme_code === programmeCode,
+      );
       const allProgrammes = (programmesRes.data ?? []) as ProgrammeRow[];
 
       const needle = query.trim().toLowerCase();
-      if (!needle) return { courses: allCourses, materials: allMaterials, programmes: allProgrammes };
+      if (!needle)
+        return { courses: allCourses, materials: allMaterials, programmes: allProgrammes };
 
       const courses = allCourses.filter((c) => {
         const haystacks = [
@@ -183,7 +221,13 @@ export function useUniversalSearch(query: string, programmeCode?: string | null)
       });
 
       const materials = allMaterials.filter((m) => {
-        const haystacks = [m.title, m.type, m.courses?.code ?? "", m.courses?.title ?? "", ...(m.tags ?? [])];
+        const haystacks = [
+          m.title,
+          m.type,
+          m.courses?.code ?? "",
+          m.courses?.title ?? "",
+          ...(m.tags ?? []),
+        ];
         return haystacks.some((h) => h.toLowerCase().includes(needle));
       });
 
@@ -220,7 +264,9 @@ export function useCatalog(search?: string, programmeCode?: string | null) {
     queryFn: async (): Promise<MaterialWithCourse[]> => {
       const { data, error } = await supabase
         .from("materials")
-        .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+        .select(
+          "*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)",
+        )
         .in("status", ["ready", "processing", "catalog_only"])
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -233,7 +279,13 @@ export function useCatalog(search?: string, programmeCode?: string | null) {
       if (!needle) return inProgramme;
 
       return inProgramme.filter((m) => {
-        const haystacks = [m.title, m.type, m.courses?.code ?? "", m.courses?.title ?? "", ...(m.tags ?? [])];
+        const haystacks = [
+          m.title,
+          m.type,
+          m.courses?.code ?? "",
+          m.courses?.title ?? "",
+          ...(m.tags ?? []),
+        ];
         return haystacks.some((h) => h && h.toLowerCase().includes(needle));
       });
     },
@@ -246,7 +298,9 @@ export function useMaterial(id: string) {
     queryFn: async (): Promise<MaterialWithCourse | null> => {
       const { data, error } = await supabase
         .from("materials")
-        .select("*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)")
+        .select(
+          "*, courses(title, code, programme_code), uploader:profiles!materials_uploaded_by_profile_fkey(full_name)",
+        )
         .eq("id", id)
         .maybeSingle();
       if (error) throw error;
@@ -284,7 +338,13 @@ export function useRegenerateMaterial() {
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
   return useMutation({
-    mutationFn: async (input: { materialId: string; text: string; title: string; confidence: number; documentModel: Json }) => {
+    mutationFn: async (input: {
+      materialId: string;
+      text: string;
+      title: string;
+      confidence: number;
+      documentModel: Json;
+    }) => {
       // The edge function runs as the caller and rejects anonymous
       // requests with 401 "Sign in required." Check first, so a
       // signed-out visitor gets a plain explanation instead of a raw
@@ -298,7 +358,6 @@ export function useRegenerateMaterial() {
         throw new Error("Only an admin can replace a published study pack.");
       }
 
-
       // The row can be gone by the time someone taps Regenerate — an
       // admin deleted it, or the card came from a stale/offline-cached
       // list. Updating a missing row succeeds silently (0 rows), so
@@ -311,7 +370,9 @@ export function useRegenerateMaterial() {
         .maybeSingle();
       if (existsError) throw existsError;
       if (!exists) {
-        throw new Error("This material no longer exists — it may have been deleted. Try uploading it again.");
+        throw new Error(
+          "This material no longer exists — it may have been deleted. Try uploading it again.",
+        );
       }
 
       // Flip back to "processing" first — the edge function refuses to
@@ -325,9 +386,14 @@ export function useRegenerateMaterial() {
         .eq("id", input.materialId);
       if (statusError) throw statusError;
 
-
       const { error } = await supabase.functions.invoke("process-material", {
-        body: { materialId: input.materialId, text: input.text, title: input.title, confidence: input.confidence, documentModel: input.documentModel },
+        body: {
+          materialId: input.materialId,
+          text: input.text,
+          title: input.title,
+          confidence: input.confidence,
+          documentModel: input.documentModel,
+        },
       });
       if (error) {
         // Without this the material stays "processing" forever and the
@@ -336,7 +402,8 @@ export function useRegenerateMaterial() {
           .from("materials")
           .update({
             status: "failed",
-            processing_error: error instanceof Error ? error.message : "Generation could not be started.",
+            processing_error:
+              error instanceof Error ? error.message : "Generation could not be started.",
           })
           .eq("id", input.materialId);
         throw error;
@@ -357,8 +424,12 @@ export function useRegenerateMaterial() {
   });
 }
 
-
-export type MaterialLookup = { id: string; title: string; type: string; courses: { code: string } | null };
+export type MaterialLookup = {
+  id: string;
+  title: string;
+  type: string;
+  courses: { code: string } | null;
+};
 
 // Resolves a batch of material IDs to just enough to display them (title,
 // type, course code) — for places that only have a materialId to go on,
@@ -393,7 +464,13 @@ export function useRelatedMaterials(
 ) {
   const limit = options?.limit ?? 6;
   return useQuery({
-    queryKey: ["related-materials", courseCode ?? null, options?.type ?? null, options?.excludeId ?? null, limit],
+    queryKey: [
+      "related-materials",
+      courseCode ?? null,
+      options?.type ?? null,
+      options?.excludeId ?? null,
+      limit,
+    ],
     queryFn: async (): Promise<MaterialWithCourse[]> => {
       let q = supabase
         .from("materials")
@@ -415,7 +492,9 @@ export function useRelatedMaterials(
 export function useIncrementDownload() {
   return useMutation({
     mutationFn: async (materialId: string) => {
-      const { error } = await supabase.rpc("increment_download_count", { p_material_id: materialId });
+      const { error } = await supabase.rpc("increment_download_count", {
+        p_material_id: materialId,
+      });
       if (error) throw error;
     },
   });
@@ -447,7 +526,9 @@ export function useToggleMaterialLike() {
   return useMutation({
     mutationFn: async (materialId: string): Promise<boolean> => {
       if (!user) throw new Error("Sign in to like materials");
-      const { data, error } = await supabase.rpc("toggle_material_like", { p_material_id: materialId });
+      const { data, error } = await supabase.rpc("toggle_material_like", {
+        p_material_id: materialId,
+      });
       if (error) throw error;
       return !!data;
     },
@@ -458,7 +539,10 @@ export function useToggleMaterialLike() {
       qc.invalidateQueries({ queryKey: ["popular-materials"] });
     },
     onError: (error: unknown) => {
-      const message = error instanceof Error && error.message ? error.message : "Couldn't like that right now — try again in a moment.";
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Couldn't like that right now — try again in a moment.";
       toast.error(message);
     },
   });
@@ -517,7 +601,9 @@ export function usePopularCourses(limit = 6) {
           .in("code", rankedCodes);
         if (error) throw error;
         const byCode = new Map((data ?? []).map((c) => [c.code, c as CourseWithProgramme]));
-        courses = rankedCodes.map((code) => byCode.get(code)).filter((c): c is CourseWithProgramme => !!c);
+        courses = rankedCodes
+          .map((code) => byCode.get(code))
+          .filter((c): c is CourseWithProgramme => !!c);
       }
 
       // Not enough real engagement yet (fresh deployment, quiet term) —
@@ -557,7 +643,8 @@ export function useCourseMaterialStats() {
         if (!row.course_code) continue;
         if (!stats[row.course_code]) stats[row.course_code] = { count: 0, types: [] };
         stats[row.course_code].count += 1;
-        if (!stats[row.course_code].types.includes(row.type)) stats[row.course_code].types.push(row.type);
+        if (!stats[row.course_code].types.includes(row.type))
+          stats[row.course_code].types.push(row.type);
       }
       return stats;
     },
@@ -584,9 +671,20 @@ export function useRecentMaterials(limit = 8) {
 export function useYoutubeRecommendations(query: string | null) {
   return useQuery({
     queryKey: ["youtube-recommendations", query],
-    queryFn: async (): Promise<{ videoId: string; title: string; channelTitle: string; thumbnail: string }[]> => {
+    queryFn: async (): Promise<
+      {
+        videoId: string;
+        title: string;
+        channelTitle: string;
+        thumbnail: string;
+        reason?: string;
+        relevance?: number;
+      }[]
+    > => {
       if (!query?.trim()) return [];
-      const { data, error } = await supabase.functions.invoke("youtube-recommendations", { body: { query } });
+      const { data, error } = await supabase.functions.invoke("youtube-recommendations", {
+        body: { query },
+      });
       if (error) {
         console.error("youtube-recommendations failed:", error);
         return [];
@@ -601,7 +699,11 @@ export function useFlashcards(materialId: string) {
   return useQuery({
     queryKey: ["flashcards", materialId],
     queryFn: async (): Promise<FlashcardRow[]> => {
-      const { data, error } = await supabase.from("flashcards").select("*").eq("material_id", materialId).order("position");
+      const { data, error } = await supabase
+        .from("flashcards")
+        .select("*")
+        .eq("material_id", materialId)
+        .order("position");
       if (error) throw error;
       return (data ?? []) as FlashcardRow[];
     },
@@ -613,7 +715,11 @@ export function useQuizQuestions(materialId: string) {
   return useQuery({
     queryKey: ["quiz", materialId],
     queryFn: async (): Promise<QuizRow[]> => {
-      const { data, error } = await supabase.from("quiz_questions").select("*").eq("material_id", materialId).order("position");
+      const { data, error } = await supabase
+        .from("quiz_questions")
+        .select("*")
+        .eq("material_id", materialId)
+        .order("position");
       if (error) throw error;
       return (data ?? []) as QuizRow[];
     },
@@ -625,7 +731,12 @@ export function useQuizQuestions(materialId: string) {
 export function useCreateRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { title: string; courseCode?: string | null; notes?: string; requestedBy: string }) => {
+    mutationFn: async (input: {
+      title: string;
+      courseCode?: string | null;
+      notes?: string;
+      requestedBy: string;
+    }) => {
       const { error } = await supabase.from("material_requests").insert({
         title: input.title,
         course_code: input.courseCode ?? null,
@@ -657,7 +768,11 @@ export function useOpenRequests() {
 export function useUpdateMaterialRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { id: string; status?: "open" | "fulfilled" | "closed"; notes?: string | null }) => {
+    mutationFn: async (input: {
+      id: string;
+      status?: "open" | "fulfilled" | "closed";
+      notes?: string | null;
+    }) => {
       const { id, ...fields } = input;
       const { error } = await supabase.from("material_requests").update(fields).eq("id", id);
       if (error) throw error;
@@ -696,16 +811,25 @@ export function useToggleSaved() {
     mutationFn: async ({ materialId, save }: { materialId: string; save: boolean }) => {
       if (!user) throw new Error("Sign in to save materials");
       if (save) {
-        const { error } = await supabase.from("saved_materials").insert({ profile_id: user.id, material_id: materialId });
+        const { error } = await supabase
+          .from("saved_materials")
+          .insert({ profile_id: user.id, material_id: materialId });
         if (error && error.code !== "23505") throw error;
       } else {
-        const { error } = await supabase.from("saved_materials").delete().eq("profile_id", user.id).eq("material_id", materialId);
+        const { error } = await supabase
+          .from("saved_materials")
+          .delete()
+          .eq("profile_id", user.id)
+          .eq("material_id", materialId);
         if (error) throw error;
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-materials"] }),
     onError: (error: unknown) => {
-      const message = error instanceof Error && error.message ? error.message : "Couldn't save that right now — try again in a moment.";
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Couldn't save that right now — try again in a moment.";
       toast.error(message);
     },
   });
@@ -760,11 +884,20 @@ export function useCreateCourse() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
-      code: string; title: string; programmeCode: string; year: number; lecturer?: string; description?: string;
+      code: string;
+      title: string;
+      programmeCode: string;
+      year: number;
+      lecturer?: string;
+      description?: string;
     }) => {
       const { error } = await supabase.from("courses").insert({
-        code: input.code, title: input.title, programme_code: input.programmeCode,
-        year: input.year, lecturer: input.lecturer, description: input.description ?? "",
+        code: input.code,
+        title: input.title,
+        programme_code: input.programmeCode,
+        year: input.year,
+        lecturer: input.lecturer,
+        description: input.description ?? "",
       });
       if (error) throw error;
     },
@@ -787,7 +920,10 @@ export function useUpdateCourse() {
       const { code, programmeCode, ...rest } = input;
       const { error } = await supabase
         .from("courses")
-        .update({ ...rest, ...(programmeCode !== undefined ? { programme_code: programmeCode } : {}) })
+        .update({
+          ...rest,
+          ...(programmeCode !== undefined ? { programme_code: programmeCode } : {}),
+        })
         .eq("code", code);
       if (error) throw error;
     },
@@ -889,7 +1025,9 @@ export function useAddHeroSlide() {
         .order("position", { ascending: false })
         .limit(1);
       const nextPosition = (existing?.[0]?.position ?? -1) + 1;
-      const { error } = await supabase.from("hero_slides").insert({ image_path: path, position: nextPosition });
+      const { error } = await supabase
+        .from("hero_slides")
+        .insert({ image_path: path, position: nextPosition });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["hero-slides"] }),
@@ -911,7 +1049,13 @@ export function useDeleteHeroSlide() {
 export function useReorderHeroSlide() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ a, b }: { a: { id: string; position: number }; b: { id: string; position: number } }) => {
+    mutationFn: async ({
+      a,
+      b,
+    }: {
+      a: { id: string; position: number };
+      b: { id: string; position: number };
+    }) => {
       await Promise.all([
         supabase.from("hero_slides").update({ position: b.position }).eq("id", a.id),
         supabase.from("hero_slides").update({ position: a.position }).eq("id", b.id),
@@ -926,7 +1070,10 @@ export function useAllStudents() {
   return useQuery({
     queryKey: ["admin-students"],
     queryFn: async (): Promise<ProfileRow[]> => {
-      const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as ProfileRow[];
     },
@@ -974,14 +1121,27 @@ export function useAdminAnalytics() {
   return useQuery({
     queryKey: ["admin-analytics"],
     queryFn: async () => {
-      const [topDownloads, topLikes, failed, materialsRes, flashcardRows, quizRows] = await Promise.all([
-        supabase.from("materials").select("id, title, download_count, courses(code)").order("download_count", { ascending: false }).limit(8),
-        supabase.from("materials").select("id, title, likes_count, courses(code)").order("likes_count", { ascending: false }).limit(8),
-        supabase.from("materials").select("id, title, processing_error, updated_at, courses(code)").eq("status", "failed").order("updated_at", { ascending: false }),
-        supabase.from("materials").select("id, download_count, likes_count, status"),
-        supabase.from("flashcards").select("material_id"),
-        supabase.from("quiz_questions").select("material_id"),
-      ]);
+      const [topDownloads, topLikes, failed, materialsRes, flashcardRows, quizRows] =
+        await Promise.all([
+          supabase
+            .from("materials")
+            .select("id, title, download_count, courses(code)")
+            .order("download_count", { ascending: false })
+            .limit(8),
+          supabase
+            .from("materials")
+            .select("id, title, likes_count, courses(code)")
+            .order("likes_count", { ascending: false })
+            .limit(8),
+          supabase
+            .from("materials")
+            .select("id, title, processing_error, updated_at, courses(code)")
+            .eq("status", "failed")
+            .order("updated_at", { ascending: false }),
+          supabase.from("materials").select("id, download_count, likes_count, status"),
+          supabase.from("flashcards").select("material_id"),
+          supabase.from("quiz_questions").select("material_id"),
+        ]);
       if (topDownloads.error) throw topDownloads.error;
       if (topLikes.error) throw topLikes.error;
       if (failed.error) throw failed.error;
@@ -989,15 +1149,25 @@ export function useAdminAnalytics() {
       if (flashcardRows.error) throw flashcardRows.error;
       if (quizRows.error) throw quizRows.error;
 
-      const visible = (materialsRes.data ?? []).filter((m) => m.status === "ready" || m.status === "catalog_only");
+      const visible = (materialsRes.data ?? []).filter(
+        (m) => m.status === "ready" || m.status === "catalog_only",
+      );
       const noEngagement = visible.filter((m) => m.download_count === 0 && m.likes_count === 0);
       const withFlashcards = new Set((flashcardRows.data ?? []).map((f) => f.material_id));
       const withQuiz = new Set((quizRows.data ?? []).map((q) => q.material_id));
 
       return {
-        topDownloads: (topDownloads.data ?? []) as (Pick<MaterialRow, "id" | "title" | "download_count"> & { courses: { code: string } | null })[],
-        topLikes: (topLikes.data ?? []) as (Pick<MaterialRow, "id" | "title" | "likes_count"> & { courses: { code: string } | null })[],
-        failed: (failed.data ?? []) as (Pick<MaterialRow, "id" | "title" | "processing_error" | "updated_at"> & { courses: { code: string } | null })[],
+        topDownloads: (topDownloads.data ?? []) as (Pick<
+          MaterialRow,
+          "id" | "title" | "download_count"
+        > & { courses: { code: string } | null })[],
+        topLikes: (topLikes.data ?? []) as (Pick<MaterialRow, "id" | "title" | "likes_count"> & {
+          courses: { code: string } | null;
+        })[],
+        failed: (failed.data ?? []) as (Pick<
+          MaterialRow,
+          "id" | "title" | "processing_error" | "updated_at"
+        > & { courses: { code: string } | null })[],
         noEngagementCount: noEngagement.length,
         visibleCount: visible.length,
         withFlashcardsCount: withFlashcards.size,
@@ -1014,7 +1184,11 @@ export function useSiteSettings() {
   return useQuery({
     queryKey: ["site-settings"],
     queryFn: async (): Promise<SiteSettingsRow> => {
-      const { data, error } = await supabase.from("site_settings").select("*").eq("id", true).single();
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("*")
+        .eq("id", true)
+        .single();
       if (error) throw error;
       return data as SiteSettingsRow;
     },
@@ -1024,10 +1198,14 @@ export function useSiteSettings() {
 export function useUpdateSiteSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { homepage_title?: string; homepage_subtitle?: string; featured_course_codes?: string[] }) => {
+    mutationFn: async (input: {
+      homepage_title?: string;
+      homepage_subtitle?: string;
+      featured_course_codes?: string[];
+    }) => {
       const { error } = await supabase.from("site_settings").update(input).eq("id", true);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["site-settings"] }),
   });
-    }
+}
