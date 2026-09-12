@@ -393,7 +393,11 @@ export function StudyPanel({
   const quizStatus: StageStatus = material.quiz_status ?? "ready";
   const anyStageFailed =
     summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
-  const isLowConfidence = material.content_confidence != null && material.content_confidence < 0.55;
+  const confidenceNote = material.content_confidence_note ?? "";
+  const isLowConfidence =
+    material.content_confidence != null &&
+    (material.content_confidence < 0.45 ||
+      /couldn't be read|may be missing|unreadable/i.test(confidenceNote));
   const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path && isAdmin;
   const kind = materialKindOf(material.type);
@@ -491,7 +495,7 @@ export function StudyPanel({
             title={material.content_confidence_note ?? undefined}
           >
             <Info className="h-3.5 w-3.5" />{" "}
-            {material.content_confidence_note ?? "This may be missing some details"}
+            {material.content_confidence_note ?? "Some document content could not be read reliably"}
           </span>
         )}
       </div>

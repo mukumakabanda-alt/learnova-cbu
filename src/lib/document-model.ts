@@ -200,7 +200,14 @@ export function buildAcademicDocumentModel(input: {
   const allBlocks = units.flatMap((unit) => unit.blocks);
   const text = units.map((unit) => unit.text).join("\n");
   const signals = qualitySignals(text);
-  const readableUnits = units.filter((unit) => unit.text.trim().length >= 20).length;
+  // Short units are normal in slides, formula sheets, title pages, and
+  // diagrams. Count a unit as readable when its parser/OCR confidence is
+  // strong, even if the visible text is brief; otherwise a perfectly
+  // extracted 40-slide deck can be mislabeled as incomplete simply because
+  // several slides contain a short formula or heading.
+  const readableUnits = units.filter(
+    (unit) => unit.text.trim().length >= 20 || unit.confidence >= 0.7,
+  ).length;
   const readableUnitRatio = units.length ? readableUnits / units.length : 0;
   const averageUnitConfidence = units.length
     ? units.reduce((sum, unit) => sum + unit.confidence, 0) / units.length
@@ -218,7 +225,7 @@ export function buildAcademicDocumentModel(input: {
         readableUnitRatio * 0.35 +
         structureBonus -
         signals.abnormalCharacterRatio * 2 -
-        signals.repeatedTokenRatio,
+        Math.min(0.12, signals.repeatedTokenRatio * 0.25),
     ),
   );
   return {
