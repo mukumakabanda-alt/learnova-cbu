@@ -426,13 +426,20 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
   const needsOcr: boolean[] = new Array(totalPages).fill(false);
 
   for (let i = 1; i <= totalPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = cleanWhitespace(
-      content.items.map((it: any) => ("str" in it ? it.str : "")).join(" "),
-    );
-    nativePages[i - 1] = pageText;
-    needsOcr[i - 1] = pageText.length < PAGE_TEXT_MIN_CHARS;
+    try {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = cleanWhitespace(
+        content.items.map((it: any) => ("str" in it ? it.str : "")).join(" "),
+      );
+      nativePages[i - 1] = pageText;
+      needsOcr[i - 1] = pageText.length < PAGE_TEXT_MIN_CHARS;
+    } catch (error) {
+      // Keep the rest of a partially damaged PDF available. The OCR pass
+      // will get a chance to recover this page if its visual layer works.
+      needsOcr[i - 1] = true;
+      console.warn(`Skipping unreadable native text layer on PDF page ${i}`, error);
+    }
   }
 
   const pagesNeedingOcr = needsOcr.reduce((n, v) => n + (v ? 1 : 0), 0);
@@ -649,7 +656,14 @@ async function extractPptxBuffer(buffer: ArrayBuffer, ctx?: OcrCtx): Promise<str
   const parts: string[] = [];
   for (let slideIndex = 0; slideIndex < slidePaths.length; slideIndex++) {
     const path = slidePaths[slideIndex];
-    const xml = await zip.files[path].async("string");
+    let xml: string;
+    try {
+      xml = await zip.files[path].async("string");
+    } catch (error) {
+      console.warn(`Skipping unreadable PowerPoint slide XML: ${path}`, error);
+      parts.push(`=== Slide ${slideIndex + 1} ===\n(Text on this slide could not be read.)`);
+      continue;
+    }
     const doc = parser.parseFromString(xml, "application/xml");
     const paragraphs = Array.from(doc.getElementsByTagName("a:p"))
       .map((paragraph) =>
