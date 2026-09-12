@@ -681,20 +681,36 @@ async function extractPptxBuffer(buffer: ArrayBuffer, ctx?: OcrCtx): Promise<str
     if (ctx && paragraphs.join(" ").length < 180) {
       const relPath = `ppt/slides/_rels/slide${slideIndex + 1}.xml.rels`;
       if (zip.files[relPath]) {
-        const relDoc = parser.parseFromString(
-          await zip.files[relPath].async("string"),
-          "application/xml",
-        );
-        for (const rel of Array.from(relDoc.getElementsByTagName("Relationship"))) {
-          const target = rel.getAttribute("Target") ?? "";
-          if (!target.includes("media/")) continue;
-          const mediaPath = target.startsWith("/")
-            ? target.slice(1)
-            : `ppt/${target.replace(/^\.\.\//, "")}`;
-          const media = zip.files[mediaPath];
-          if (!media || ctx.budget.remaining <= 0) continue;
-          const extracted = await extractImage(new Blob([await media.async("arraybuffer")]), ctx);
-          if (extracted.text) mediaText.push(extracted.text);
+        try {
+          const relDoc = parser.parseFromString(
+            await zip.files[relPath].async("string"),
+            "application/xml",
+          );
+          for (const rel of Array.from(relDoc.getElementsByTagName("Relationship"))) {
+            const target = rel.getAttribute("Target") ?? "";
+            if (!target.includes("media/")) continue;
+            const mediaPath = target.startsWith("/")
+              ? target.slice(1)
+              : `ppt/${target.replace(/^\.\.\//, "")}`;
+            const media = zip.files[mediaPath];
+            if (!media || ctx.budget.remaining <= 0) continue;
+            try {
+              const extracted = await extractImage(
+                new Blob([await media.async("arraybuffer")]),
+                ctx,
+              );
+              if (extracted.text) mediaText.push(extracted.text);
+            } catch (error) {
+              // Keep slide text usable when one exported image has a bad
+              // CRC, truncated stream, or unsupported encoding.
+              console.warn(
+                `Skipping unreadable PowerPoint media during extraction: ${mediaPath}`,
+                error,
+              );
+            }
+          }
+        } catch (error) {
+          console.warn(`Skipping unreadable PowerPoint relationships: ${relPath}`, error);
         }
       }
     }

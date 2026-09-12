@@ -291,7 +291,16 @@ export function PptxRenderer({ blob }: { blob: Blob }) {
       if (mediaCache.has(path)) return mediaCache.get(path)!;
       const file = zip.file(path);
       if (!file) return null;
-      const b64 = await file.async("base64");
+      let b64: string;
+      try {
+        b64 = await file.async("base64");
+      } catch (error) {
+        // A malformed image should not make an otherwise readable deck
+        // unusable. Some mobile-exported PPTX files contain one bad media
+        // entry while all slide XML and text remain valid.
+        console.warn(`Skipping unreadable PowerPoint media entry: ${path}`, error);
+        return null;
+      }
       const ext = (path.split(".").pop() || "png").toLowerCase();
       const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : ext === "svg" ? "image/svg+xml" : "image/png";
       const url = `data:${mime};base64,${b64}`;
