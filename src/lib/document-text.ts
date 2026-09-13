@@ -424,6 +424,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
 
   const nativePages: string[] = new Array(totalPages).fill("");
   const needsOcr: boolean[] = new Array(totalPages).fill(false);
+  const visualPages: boolean[] = new Array(totalPages).fill(false);
 
   for (let i = 1; i <= totalPages; i++) {
     try {
@@ -433,7 +434,19 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
         content.items.map((it: any) => ("str" in it ? it.str : "")).join(" "),
       );
       nativePages[i - 1] = pageText;
-      needsOcr[i - 1] = pageText.length < PAGE_TEXT_MIN_CHARS;
+      try {
+        const ops = await page.getOperatorList();
+        const imageOps = [
+          pdfjsLib.OPS?.paintImageMaskXObject,
+          pdfjsLib.OPS?.paintImageXObject,
+          pdfjsLib.OPS?.paintInlineImageXObject,
+        ].filter((value: unknown) => typeof value === "number");
+        visualPages[i - 1] = ops.fnArray.some((fn: number) => imageOps.includes(fn));
+      } catch {
+        visualPages[i - 1] = false;
+      }
+      needsOcr[i - 1] =
+        pageText.length < PAGE_TEXT_MIN_CHARS || (visualPages[i - 1] && pageText.length < 500);
     } catch (error) {
       // Keep the rest of a partially damaged PDF available. The OCR pass
       // will get a chance to recover this page if its visual layer works.
@@ -522,8 +535,13 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
       const ocrText = best.text;
       // Keep whichever is longer — occasionally the native layer had
       // *something* just under the threshold that OCR actually misses.
+      const existing = nativePages[pageIndex];
       nativePages[pageIndex] =
-        ocrText.length > nativePages[pageIndex].length ? ocrText : nativePages[pageIndex];
+        visualPages[pageIndex] && existing && ocrText && !existing.includes(ocrText)
+          ? `${existing}\n${ocrText}`
+          : ocrText.length > existing.length
+            ? ocrText
+            : existing;
       ocredCount++;
     } catch {
       // A short native layer can still be valid content (a formula, heading,
