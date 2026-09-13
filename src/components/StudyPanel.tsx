@@ -360,9 +360,9 @@ export function StudyPanel({
       const filename = originalFileName(material.file_path, material.title);
       const file = new File([fetched.blob], filename, { type: fetched.mime });
       const { text, quality, confidence, model } = await extractDocumentText(file);
-      if (quality === "none" || !text.trim() || confidence < 0.5) {
+      if (quality === "none" || !text.trim()) {
         toast.error(
-          "Study tools aren't available because this file couldn't be read with enough confidence.",
+          "No readable source text was recovered from this file. Upload a clear page image or a text-exported version for study tools.",
         );
         return;
       }
@@ -393,11 +393,6 @@ export function StudyPanel({
   const quizStatus: StageStatus = material.quiz_status ?? "ready";
   const anyStageFailed =
     summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
-  const confidenceNote = material.content_confidence_note ?? "";
-  const isLowConfidence =
-    material.content_confidence != null &&
-    (material.content_confidence < 0.45 ||
-      /couldn't be read|may be missing|unreadable/i.test(confidenceNote));
   const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path && isAdmin;
   const kind = materialKindOf(material.type);
@@ -487,15 +482,6 @@ export function StudyPanel({
         {isOutdated && (
           <span className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper">
             <AlertTriangle className="h-3.5 w-3.5" /> From {material.content_year} — may be outdated
-          </span>
-        )}
-        {isLowConfidence && (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper"
-            title={material.content_confidence_note ?? undefined}
-          >
-            <Info className="h-3.5 w-3.5" />{" "}
-            {material.content_confidence_note ?? "Some document content could not be read reliably"}
           </span>
         )}
       </div>

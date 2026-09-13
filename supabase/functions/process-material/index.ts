@@ -65,7 +65,6 @@ const corsHeaders = {
 // model id if this one ever stops resolving — the gateway's model list
 // does shift over time.
 const MODEL = "google/gemini-3.7-flash";
-const MIN_EXTRACTION_CONFIDENCE = 0.5;
 
 // Text at or under this size is sent to the model as-is — no chunking,
 // no condensing. This is deliberately generous: gemini-2.5-flash's real
@@ -906,23 +905,6 @@ Deno.serve(async (req: Request) => {
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
     }
-    if (extractionConfidence < MIN_EXTRACTION_CONFIDENCE) {
-      await admin
-        .from("materials")
-        .update({
-          status: "catalog_only",
-          extraction_confidence: extractionConfidence,
-          document_model: documentModel,
-          processing_error:
-            "Study tools aren't available because this document couldn't be read with enough confidence.",
-        })
-        .eq("id", materialId);
-      return jsonResponse(
-        { error: "Study tools aren't available because document confidence is below 50%." },
-        422,
-      );
-    }
-
     if (!lovableApiKey) {
       throw new Error(
         "AI generation isn't configured yet: the LOVABLE_API_KEY secret is missing. Add it in Supabase → Project Settings → Edge Functions → Secrets (or Lovable Cloud → Backend → Secrets), then tap Regenerate on this material.",

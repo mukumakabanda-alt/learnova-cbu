@@ -411,7 +411,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const validYear = year && Number.isFinite(year) ? year : null;
       const tooLongForStudyTools = pages !== null && pages > STUDY_TOOL_PAGE_LIMIT;
       setCatalogueOnly(tooLongForStudyTools);
-      const willGenerate = !tooLongForStudyTools && quality !== "none" && confidence >= 0.5;
+      const willGenerate = !tooLongForStudyTools && text.trim().length > 0;
 
       // Save the material now — status "processing" if there's text worth
       // generating study tools from, "catalog_only" if not. Generation
@@ -455,9 +455,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             ? `This document has ${pages} pages, so Learnova saved it for browsing and download without generating a full study pack. For focused study, upload a screenshot or a smaller page range.`
             : willGenerate
               ? null
-              : confidence < 0.5
-                ? "Study tools aren't available for this document yet because Learnova couldn't read it with enough confidence. The original file is still saved and available to preview or download."
-                : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
+              : "The original file is saved for browsing and download. Select a readable page or image for focused study tools.",
         })
         .select()
         .single();
