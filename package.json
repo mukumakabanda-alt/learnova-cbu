@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "test:document-quality": "tsx scripts/document-quality.test.ts",
     "check:backend": "node scripts/check-backend-consistency.mjs"
   },
   "dependencies": {

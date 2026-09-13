@@ -526,7 +526,10 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
         ocrText.length > nativePages[pageIndex].length ? ocrText : nativePages[pageIndex];
       ocredCount++;
     } catch {
-      failedCount++;
+      // A short native layer can still be valid content (a formula, heading,
+      // table label, or diagram caption). Only count the page as uncovered
+      // when neither native extraction nor OCR produced anything usable.
+      if (!nativePages[pageIndex].trim()) failedCount++;
     }
     ctx.budget.remaining--;
   }
