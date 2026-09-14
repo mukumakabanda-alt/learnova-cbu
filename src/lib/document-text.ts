@@ -55,7 +55,7 @@ const MAX_ZIP_DEPTH = 2;
 // of scanned notes) and is far better than nothing.
 const MAX_OCR_UNITS = 20;
 /** Keep very large files accessible without forcing a low-signal full study pack. */
-export const STUDY_TOOL_PAGE_LIMIT = 80;
+export const STUDY_TOOL_PAGE_LIMIT = 100;
 
 // Tesseract.js fetches its OCR core (WASM) + English language data — a
 // combined ~15-20MB — from a third-party CDN at runtime; this project
@@ -111,6 +111,22 @@ function qualityOf(text: string): ExtractedDocument["quality"] {
   if (len >= 200) return "good";
   if (len >= 20) return "partial";
   return "none";
+}
+
+// Tesseract can return without throwing while still having produced
+// mostly noise — heavy skew, poor lighting, or handwriting it simply
+// can't read (see document-quality reasoning in chat). Treating that
+// output as a genuine read just because it's non-empty (or longer than
+// an empty native layer) both corrupts this document's quality signals
+// (qualitySignals in document-model.ts) and makes the study-pack
+// generator think it has real source material when it doesn't. Verified
+// against real diagram-caption-style text and plausible OCR noise before
+// this change — see reasoning in chat.
+function looksLikeUsableOcrText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return false;
+  const alnum = (trimmed.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  return alnum / trimmed.length >= 0.55;
 }
 
 function finalizeExtraction(
@@ -261,17 +277,58 @@ function humanizeOcrStatus(ctx: OcrCtx, status: string | undefined): string {
   }
 }
 
+// Before this, every extractDocumentText() call spun up its own Tesseract
+// worker and terminated it the moment that one document finished — so the
+// ~15-20MB OCR core + language data fetch (see OCR_INIT_TIMEOUT_MS above)
+// was paid again on every single upload, even a 3-4 page scan, even for
+// the second document a student uploads thirty seconds later. That
+// re-fetch was often the actual "slow" part, not the OCR itself.
+// The worker is now a warm module-level singleton: created once on first
+// use, reused across as many documents as the student uploads back to
+// back, and only shut down after a real idle gap — see
+// scheduleOcrIdleShutdown — so it doesn't sit in memory forever on a
+// low-end phone either.
+const OCR_IDLE_SHUTDOWN_MS = 3 * 60_000;
+let sharedOcrWorker: Promise<any> | null = null;
+let ocrIdleTimer: ReturnType<typeof setTimeout> | null = null;
+// Whichever ctx most recently asked for the worker "owns" progress
+// reporting — the worker itself is shared, but each document still has
+// its own onProgress UI callback, so the logger below must always read
+// the current owner rather than close over whoever created the worker.
+let activeOcrCtx: OcrCtx | null = null;
+
+function scheduleOcrIdleShutdown() {
+  if (ocrIdleTimer) clearTimeout(ocrIdleTimer);
+  ocrIdleTimer = setTimeout(() => {
+    const worker = sharedOcrWorker;
+    sharedOcrWorker = null;
+    activeOcrCtx = null;
+    ocrIdleTimer = null;
+    worker
+      ?.then((w) => w.terminate())
+      .catch(() => {
+        // best-effort cleanup only
+      });
+  }, OCR_IDLE_SHUTDOWN_MS);
+}
+
 async function getOcrWorker(ctx: OcrCtx) {
-  if (!ctx.worker) {
-    ctx.worker = withTimeout(
+  if (ocrIdleTimer) {
+    clearTimeout(ocrIdleTimer);
+    ocrIdleTimer = null;
+  }
+  activeOcrCtx = ctx;
+  if (!sharedOcrWorker) {
+    sharedOcrWorker = withTimeout(
       (async () => {
         const mod: any = await import("tesseract.js");
         const createWorker = mod.createWorker ?? mod.default?.createWorker;
         return createWorker("eng", 1, {
           logger: (m: any) => {
-            if (ctx.onProgress) {
-              ctx.onProgress({
-                stage: humanizeOcrStatus(ctx, m?.status),
+            const liveCtx = activeOcrCtx;
+            if (liveCtx?.onProgress) {
+              liveCtx.onProgress({
+                stage: humanizeOcrStatus(liveCtx, m?.status),
                 progress: typeof m?.progress === "number" ? m.progress : 0,
               });
             }
@@ -282,23 +339,39 @@ async function getOcrWorker(ctx: OcrCtx) {
       "Loading the OCR engine",
     );
   }
-  return ctx.worker;
+  ctx.worker = sharedOcrWorker;
+  return sharedOcrWorker;
 }
 
+// Documents used to terminate the worker the moment they finished. Now
+// they just release ownership and start the idle clock — see
+// scheduleOcrIdleShutdown — so a student uploading several scans in a row
+// never pays the engine-load cost more than once.
 async function terminateOcrWorker(ctx: OcrCtx) {
-  if (!ctx.worker) return;
-  try {
-    const worker = await ctx.worker;
-    await worker.terminate();
-  } catch {
-    // best-effort cleanup only
-  }
+  if (ctx.worker !== sharedOcrWorker || !sharedOcrWorker) return;
+  scheduleOcrIdleShutdown();
 }
 
-async function renderPdfPageToCanvas(pdf: any, pageNumber: number): Promise<HTMLCanvasElement> {
+// A large source file is almost always a big scan/photo batch, not denser
+// text — rendering every page at the same 2000px target just multiplies
+// OCR time for no real accuracy gain. Stepping the target down for bigger
+// files trades a little headroom on already-large source images (which
+// have plenty of pixels to spare) for meaningfully faster processing on
+// exactly the files Muks flagged as slow (10-20MB+ scans).
+function ocrTargetLongEdgeForFileSize(fileBytes: number): number {
+  const mb = fileBytes / (1024 * 1024);
+  if (mb > 20) return 1500;
+  if (mb > 10) return 1700;
+  return 2000;
+}
+
+async function renderPdfPageToCanvas(
+  pdf: any,
+  pageNumber: number,
+  targetLongEdge = 2000,
+): Promise<HTMLCanvasElement> {
   const page = await pdf.getPage(pageNumber);
   const base = page.getViewport({ scale: 1 });
-  const targetLongEdge = 2000;
   const scale = Math.min(2.5, Math.max(1, targetLongEdge / Math.max(base.width, base.height)));
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement("canvas");
@@ -421,10 +494,10 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
 
   const pdf = await (pdfjsLib as any).getDocument({ data: new Uint8Array(buffer) }).promise;
   const totalPages: number = pdf.numPages;
+  const ocrTargetLongEdge = ocrTargetLongEdgeForFileSize(file.size ?? 0);
 
   const nativePages: string[] = new Array(totalPages).fill("");
   const needsOcr: boolean[] = new Array(totalPages).fill(false);
-  const visualPages: boolean[] = new Array(totalPages).fill(false);
 
   for (let i = 1; i <= totalPages; i++) {
     try {
@@ -434,19 +507,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
         content.items.map((it: any) => ("str" in it ? it.str : "")).join(" "),
       );
       nativePages[i - 1] = pageText;
-      try {
-        const ops = await page.getOperatorList();
-        const imageOps = [
-          pdfjsLib.OPS?.paintImageMaskXObject,
-          pdfjsLib.OPS?.paintImageXObject,
-          pdfjsLib.OPS?.paintInlineImageXObject,
-        ].filter((value: unknown) => typeof value === "number");
-        visualPages[i - 1] = ops.fnArray.some((fn: number) => imageOps.includes(fn));
-      } catch {
-        visualPages[i - 1] = false;
-      }
-      needsOcr[i - 1] =
-        pageText.length < PAGE_TEXT_MIN_CHARS || (visualPages[i - 1] && pageText.length < 500);
+      needsOcr[i - 1] = pageText.length < PAGE_TEXT_MIN_CHARS;
     } catch (error) {
       // Keep the rest of a partially damaged PDF available. The OCR pass
       // will get a chance to recover this page if its visual layer works.
@@ -526,7 +587,7 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
       progress: n / ocrableCount,
     });
     try {
-      const canvas = await renderPdfPageToCanvas(pdf, pageNumber);
+      const canvas = await renderPdfPageToCanvas(pdf, pageNumber, ocrTargetLongEdge);
       const best = await withTimeout(
         recognizeWithOrientation(worker, canvas),
         OCR_PAGE_TIMEOUT_MS * 3,
@@ -535,19 +596,18 @@ async function extractPdf(file: File | Blob, ctx: OcrCtx): Promise<ExtractedDocu
       const ocrText = best.text;
       // Keep whichever is longer — occasionally the native layer had
       // *something* just under the threshold that OCR actually misses.
-      const existing = nativePages[pageIndex];
-      nativePages[pageIndex] =
-        visualPages[pageIndex] && existing && ocrText && !existing.includes(ocrText)
-          ? `${existing}\n${ocrText}`
-          : ocrText.length > existing.length
-            ? ocrText
-            : existing;
-      ocredCount++;
+      // But only when OCR actually looks usable (see
+      // looksLikeUsableOcrText) — otherwise this page had no reliable
+      // native text either, so it's genuinely uncovered, not "read".
+      if (looksLikeUsableOcrText(ocrText)) {
+        nativePages[pageIndex] =
+          ocrText.length > nativePages[pageIndex].length ? ocrText : nativePages[pageIndex];
+        ocredCount++;
+      } else if (!nativePages[pageIndex].trim()) {
+        failedCount++;
+      }
     } catch {
-      // A short native layer can still be valid content (a formula, heading,
-      // table label, or diagram caption). Only count the page as uncovered
-      // when neither native extraction nor OCR produced anything usable.
-      if (!nativePages[pageIndex].trim()) failedCount++;
+      failedCount++;
     }
     ctx.budget.remaining--;
   }
@@ -1091,4 +1151,4 @@ export function guessMaterialType(filename: string, textSample?: string): Guessa
     if (haystacks.some((h) => h && patterns.some((p) => p.test(h)))) return type;
   }
   return "Notes";
-}
+             }
