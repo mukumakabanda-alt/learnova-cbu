@@ -424,6 +424,35 @@ export function useRegenerateMaterial() {
   });
 }
 
+// Accepts process-material's independent classification (materials.
+// detected_type — see migration 20260913090000) as the material's actual
+// type. This only ever runs from an explicit admin tap on the "Looks like
+// X — Change?" prompt: the detection is never applied automatically, so a
+// student's own upload choice is never silently overwritten. Regenerating
+// the study pack under the corrected type is a separate step the caller
+// triggers afterward (handleRegenerate in StudyPanel) — this mutation's
+// only job is fixing the label.
+export function useAcceptDetectedType() {
+  const qc = useQueryClient();
+  const { isAdmin } = useAuth();
+  return useMutation({
+    mutationFn: async (input: { materialId: string; type: string }) => {
+      if (!isAdmin) {
+        throw new Error("Only an admin can change a material's detected type.");
+      }
+      const { error } = await supabase
+        .from("materials")
+        .update({ type: input.type, type_disagreement: false })
+        .eq("id", input.materialId);
+      if (error) throw error;
+    },
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ["material", input.materialId] });
+      qc.invalidateQueries({ queryKey: ["catalog"] });
+    },
+  });
+}
+
 export type MaterialLookup = {
   id: string;
   title: string;
