@@ -682,6 +682,66 @@ function materialKind(materialType: string): MaterialKind {
   return "standard";
 }
 
+// Independent second opinion on document type, run here against the full
+// extracted text — separate from (and never trusting) whatever the
+// upload flow's client-side classifier or a student's manual pick already
+// set materials.type to. See migration 20260913090000 for why: nothing in
+// this pipeline previously re-checked that value before deciding which
+// generator to run, so one wrong client-side guess became a permanently
+// wrong study experience (e.g. a past paper quietly generating ordinary
+// flashcards instead of a question/answer kit).
+const PAST_PAPER_SIGNALS: RegExp[] = [
+  /\b(test|examination|exam|mid[- ]semester|final exam|memorandum)\b/i,
+  /\b(time allowed|time:\s*\d|answer all questions)\b/i,
+  /\bmarks?\b/i,
+  /\b(section\s+[a-d]\b|question\s*\d+|\d+[.)]\s+[A-Z(])/,
+];
+const OUTLINE_SIGNALS: RegExp[] = [
+  /\bcourse outline\b/i,
+  /\blearning outcomes?\b/i,
+  /\b(weekly topics|course content|course objectives)\b/i,
+];
+const ASSIGNMENT_SIGNALS: RegExp[] = [
+  /\bassignment\b/i,
+  /\b(submission|coursework|submit (your|this))\b/i,
+  /\bdeadline\b/i,
+];
+
+type DetectedKind = Exclude<MaterialKind, "standard">;
+const DETECTION_LABELS: Record<DetectedKind, string> = {
+  "past-paper": "Past Paper",
+  outline: "Course Outline",
+  assignment: "Assignment",
+};
+const DETECTION_SIGNALS: Record<DetectedKind, RegExp[]> = {
+  "past-paper": PAST_PAPER_SIGNALS,
+  outline: OUTLINE_SIGNALS,
+  assignment: ASSIGNMENT_SIGNALS,
+};
+// How much of a kind's own evidence has to show up before a disagreement
+// is trusted enough to change which generator runs. Deliberately over
+// half — this overrides routing, not just an FYI label, so a lone
+// coincidental match (e.g. one stray "deadline") shouldn't be enough.
+const MIN_DISAGREEMENT_CONFIDENCE = 0.5;
+
+function detectMaterialKind(text: string): { kind: MaterialKind; label: string; confidence: number } {
+  // The type-defining evidence (headers, instructions, course-outline
+  // boilerplate) is almost always in the opening portion of a document —
+  // sampling keeps this cheap even on a long condensed extract.
+  const sample = text.slice(0, 6000);
+  const scored = (Object.keys(DETECTION_SIGNALS) as DetectedKind[]).map((kind) => {
+    const signals = DETECTION_SIGNALS[kind];
+    const hits = signals.filter((pattern) => pattern.test(sample)).length;
+    return { kind, hits, confidence: hits / signals.length };
+  });
+  scored.sort((a, b) => b.hits - a.hits);
+  const top = scored[0];
+  if (!top || top.hits < 2) {
+    return { kind: "standard", label: "Notes", confidence: 0 };
+  }
+  return { kind: top.kind, label: DETECTION_LABELS[top.kind], confidence: top.confidence };
+}
+
 async function generatePastPaperKit(
   lovableApiKey: string,
   workingText: string,
@@ -905,6 +965,16 @@ Deno.serve(async (req: Request) => {
     if (!materialId || !text.trim()) {
       return jsonResponse({ error: "materialId and text are required" }, 400);
     }
+    // This used to hard-refuse generation below extractionConfidence 0.5.
+    // Removed for the same reason as the matching check in
+    // DocumentUpload.tsx: the confidence formula was flagging plenty of
+    // genuinely fine documents (math/stats notation, then briefly a
+    // diagram-detection experiment that OCR'd letterhead crests) as
+    // unreadable. Now that those are fixed, a low score is a much more
+    // trustworthy signal — but it should inform the student (still stored
+    // as extraction_confidence, still shown as a note in the study
+    // workspace), not silently refuse to even try.
+
     if (!lovableApiKey) {
       throw new Error(
         "AI generation isn't configured yet: the LOVABLE_API_KEY secret is missing. Add it in Supabase → Project Settings → Edge Functions → Secrets (or Lovable Cloud → Backend → Secrets), then tap Regenerate on this material.",
@@ -960,7 +1030,29 @@ Deno.serve(async (req: Request) => {
     await admin.from("pipeline_invocations").insert({ user_id: callerId, material_id: materialId });
 
     const materialType = material.type ?? "Notes";
-    const kind = materialKind(materialType);
+    const storedKind = materialKind(materialType);
+    const detection = detectMaterialKind(text);
+    // A confident disagreement wins the routing decision for *this*
+    // generation pass. It never rewrites materials.type itself — that
+    // stays whatever the uploader set — so a student's deliberate choice
+    // is never silently overridden; the study workspace instead offers a
+    // "looks like X — change?" prompt from detected_type.
+    const disagrees = detection.kind !== storedKind && detection.confidence >= MIN_DISAGREEMENT_CONFIDENCE;
+    const kind = disagrees ? detection.kind : storedKind;
+    // Only used for the descriptive "catalogued as: X" text inside prompts
+    // below — kind (not this) is what actually decides which generator
+    // runs, so a summary written alongside a detection-driven past-paper
+    // kit still describes the document consistently with that kit.
+    const effectiveTypeLabel = disagrees ? detection.label : materialType;
+    await admin
+      .from("materials")
+      .update({
+        detected_type: detection.label,
+        detected_type_confidence: detection.confidence,
+        type_disagreement: disagrees,
+      })
+      .eq("id", materialId);
+
     const groundedText = `${text}${studyEvidence(documentModel)}`;
     const {
       text: workingText,
@@ -1001,7 +1093,7 @@ Deno.serve(async (req: Request) => {
               lovableApiKey,
               workingText,
               title,
-              materialType,
+              effectiveTypeLabel,
               wasCondensed,
             );
             const { error } = await admin
@@ -1254,6 +1346,16 @@ Deno.serve(async (req: Request) => {
       [confidenceNote, stageMessages.length ? stageMessages.join(" · ") : null]
         .filter(Boolean)
         .join(" ") || null;
+    // Was declared AFTER the materials.update() call below, which reads it
+    // for generation_quality.stages_succeeded — a genuine
+    // use-before-declaration ReferenceError that threw on every single
+    // material classified as "standard" (Notes, Slides, Summary — the
+    // default kind, and the common case), landing in the catch block at
+    // the bottom of this function with status "failed" regardless of how
+    // clean the extraction was. Moved above its first use.
+    const successfulStages = [summaryOutcome, flashcardsOutcome, quizOutcome].filter(
+      (outcome) => outcome.status === "fulfilled",
+    ).length;
 
     await admin
       .from("materials")
@@ -1279,9 +1381,6 @@ Deno.serve(async (req: Request) => {
       })
       .eq("id", materialId);
 
-    const successfulStages = [summaryOutcome, flashcardsOutcome, quizOutcome].filter(
-      (outcome) => outcome.status === "fulfilled",
-    ).length;
     const groundingConfidence =
       Math.round(Math.min(extractionConfidence, 0.55 + successfulStages * 0.13) * 100) / 100;
     if (anySucceeded)
