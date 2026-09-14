@@ -36,6 +36,7 @@ import {
   useSavedMaterials,
   useToggleSaved,
   useRegenerateMaterial,
+  useAcceptDetectedType,
   type MaterialWithCourse,
 } from "@/lib/queries";
 import { useAuth } from "@/hooks/use-auth";
@@ -182,6 +183,7 @@ export function StudyPanel({
 
   const regenerateMutation = useRegenerateMaterial();
   const regenerating = regeneratingLocally || regenerateMutation.isPending;
+  const acceptDetectedType = useAcceptDetectedType();
 
   useEffect(() => {
     if (material.status === "ready") bumpStreak.mutate();
@@ -385,6 +387,27 @@ export function StudyPanel({
     }
   }
 
+  // "Looks like a Past Paper — Change?" — accepts process-material's own
+  // independent classification (see migration 20260913090000) instead of
+  // whatever materials.type was set to at upload. Only ever runs from an
+  // explicit tap, never automatically, so a student's own choice at
+  // upload is never silently overwritten.
+  async function handleAcceptDetectedType() {
+    if (!material.detected_type) return;
+    try {
+      await acceptDetectedType.mutateAsync({
+        materialId: material.id,
+        type: material.detected_type,
+      });
+      toast.success(`Changed to ${material.detected_type} — regenerating study tools…`);
+      await handleRegenerate();
+    } catch (e) {
+      toast.error(
+        e instanceof Error && e.message ? e.message : "Couldn't change the material type right now.",
+      );
+    }
+  }
+
   const isOutdated = material.content_year != null && CURRENT_YEAR - material.content_year >= 5;
   const isProcessing = material.status === "processing";
   const isFailed = material.status === "failed";
@@ -393,6 +416,11 @@ export function StudyPanel({
   const quizStatus: StageStatus = material.quiz_status ?? "ready";
   const anyStageFailed =
     summaryStatus === "failed" || flashcardsStatus === "failed" || quizStatus === "failed";
+  const confidenceNote = material.content_confidence_note ?? "";
+  const isLowConfidence =
+    material.content_confidence != null &&
+    (material.content_confidence < 0.45 ||
+      /couldn't be read|may be missing|unreadable/i.test(confidenceNote));
   const isLocalFallback = material.generation_source === "local-fallback";
   const canRegenerate = !!material.file_path && isAdmin;
   const kind = materialKindOf(material.type);
@@ -483,6 +511,30 @@ export function StudyPanel({
           <span className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper">
             <AlertTriangle className="h-3.5 w-3.5" /> From {material.content_year} — may be outdated
           </span>
+        )}
+        {isLowConfidence && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper"
+            title={material.content_confidence_note ?? undefined}
+          >
+            <Info className="h-3.5 w-3.5" />{" "}
+            {material.content_confidence_note ?? "Some document content could not be read reliably"}
+          </span>
+        )}
+        {material.type_disagreement && material.detected_type && canRegenerate && (
+          <button
+            onClick={handleAcceptDetectedType}
+            disabled={acceptDetectedType.isPending || regenerating}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-copper/30 bg-copper/10 px-3 py-1.5 text-xs font-medium text-copper hover:bg-copper/20"
+            title={`Catalogued as ${material.type}, but reads like a ${material.detected_type}`}
+          >
+            {acceptDetectedType.isPending || regenerating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Info className="h-3.5 w-3.5" />
+            )}
+            Looks like a {material.detected_type} — Change?
+          </button>
         )}
       </div>
 
@@ -1371,4 +1423,4 @@ function FailedState({
       )}
     </div>
   );
-}
+  }
