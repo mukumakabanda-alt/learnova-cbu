@@ -411,6 +411,12 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const validYear = year && Number.isFinite(year) ? year : null;
       const tooLongForStudyTools = pages !== null && pages > STUDY_TOOL_PAGE_LIMIT;
       setCatalogueOnly(tooLongForStudyTools);
+      // Confidence used to gate this outright (confidence >= 0.5) — but a
+      // low score was too often *wrong*, not a real signal of an unusable
+      // document (see qualitySignals / looksLikeUsableOcrText fixes).
+      // Now: attempt generation whenever there's any real text at all;
+      // confidence still gets stored and still shows an honest note on
+      // the study page, it just no longer blocks the attempt.
       const willGenerate = !tooLongForStudyTools && text.trim().length > 0;
 
       // Save the material now — status "processing" if there's text worth
@@ -455,7 +461,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             ? `This document has ${pages} pages, so Learnova saved it for browsing and download without generating a full study pack. For focused study, upload a screenshot or a smaller page range.`
             : willGenerate
               ? null
-              : "The original file is saved for browsing and download. Select a readable page or image for focused study tools.",
+              : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
         })
         .select()
         .single();
@@ -618,10 +624,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       const confidence = confidenceValues.length ? Math.min(...confidenceValues) : null;
       const tooLongForStudyTools = pageResults.length > STUDY_TOOL_PAGE_LIMIT;
       setCatalogueOnly(tooLongForStudyTools);
-      const willGenerate =
-        !tooLongForStudyTools &&
-        pageResults.some((p) => p.quality !== "none") &&
-        (confidence ?? 0) >= 0.5;
+      const willGenerate = !tooLongForStudyTools && combinedText.trim().length > 0;
       const confidenceNote =
         readablePages < pageResults.length
           ? `${pageResults.length - readablePages} of ${pageResults.length} pages didn't have any readable text.`
@@ -675,9 +678,7 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             : null,
           summary: willGenerate
             ? null
-            : (confidence ?? 0) < 0.5
-              ? "Study tools aren't available for this document yet because Learnova couldn't read enough of it confidently. The photos are still saved and available to preview or download."
-              : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
+            : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
         })
         .select()
         .single();
@@ -976,4 +977,4 @@ function BundleThumb({ file, index }: { file: File; index: number }) {
       </span>
     </div>
   );
-}
+    }
