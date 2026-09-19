@@ -1,7 +1,23 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate, Link } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "framer-motion";
-import { Upload, Loader2, CheckCircle2, FileWarning, LogIn } from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  useNavigate,
+  Link,
+} from "@tanstack/react-router";
+import {
+  AnimatePresence,
+  motion,
+} from "framer-motion";
+import {
+  Upload,
+  Loader2,
+  CheckCircle2,
+  FileWarning,
+  LogIn,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -11,11 +27,26 @@ import {
   guessMaterialType,
   STUDY_TOOL_PAGE_LIMIT,
 } from "@/lib/document-text";
-import type { AcademicDocumentModel } from "@/lib/document-model";
-import { ensureFileExtension } from "@/lib/document-files";
-import { useAuth } from "@/hooks/use-auth";
-import { useCourses } from "@/lib/queries";
-import { LearnovaAI } from "@/lib/learnova-ai";
+import {
+  buildAcademicDocumentModel,
+  type AcademicDocumentModel,
+} from "@/lib/document-model";
+import {
+  enhanceDocumentBatchWithVisualAI,
+  enhanceDocumentWithVisualAI,
+} from "@/lib/document-vision";
+import {
+  ensureFileExtension,
+} from "@/lib/document-files";
+import {
+  useAuth,
+} from "@/hooks/use-auth";
+import {
+  useCourses,
+} from "@/lib/queries";
+import {
+  LearnovaAI,
+} from "@/lib/learnova-ai";
 
 const MATERIAL_TYPES = [
   "Notes",
@@ -25,58 +56,153 @@ const MATERIAL_TYPES = [
   "Assignment",
   "Outline",
 ] as const;
-type MaterialType = (typeof MATERIAL_TYPES)[number];
+
+type MaterialType =
+  (typeof MATERIAL_TYPES)[number];
 
 // Generation used to be a third stage here, blocking this screen for as
 // long as the AI call took. It now happens in the background after the
 // material is saved — see runBackgroundGeneration below and the study
 // page, which shows live per-stage progress instead (StudyPanel.tsx).
-const STAGES = ["Reading & uploading…", "Saving to your library…"];
+const STAGES = [
+  "Reading & uploading…",
+  "Saving to your library…",
+];
 
-function safeDbText(value: unknown, fallback = ""): string {
-  return String(value ?? fallback)
-    .replace(/\u0000/g, "")
-    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
-    .replace(/[\uD800-\uDFFF]/g, "")
-    .replace(/[ \t]+/g, " ")
+function safeDbText(
+  value: unknown,
+  fallback = "",
+): string {
+  return String(
+    value ?? fallback,
+  )
+    .replace(
+      /\u0000/g,
+      "",
+    )
+    .replace(
+      /[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,
+      " ",
+    )
+    .replace(
+      /[\uD800-\uDFFF]/g,
+      "",
+    )
+    .replace(
+      /[ \t]+/g,
+      " ",
+    )
     .trim();
 }
 
-function safeFileName(name: string): string {
-  const cleaned = safeDbText(name, "document")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/[._-]{2,}/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "")
-    .replace(/-+/g, "-")
-    .slice(0, 160)
-    .trim();
-  return cleaned || "document";
+function safeFileName(
+  name: string,
+): string {
+  const cleaned =
+    safeDbText(
+      name,
+      "document",
+    )
+      .normalize(
+        "NFKD",
+      )
+      .replace(
+        /[\u0300-\u036f]/g,
+        "",
+      )
+      .replace(
+        /[^a-zA-Z0-9._-]+/g,
+        "-",
+      )
+      .replace(
+        /[._-]{2,}/g,
+        "-",
+      )
+      .replace(
+        /^[._-]+|[._-]+$/g,
+        "",
+      )
+      .replace(
+        /-+/g,
+        "-",
+      )
+      .slice(
+        0,
+        160,
+      )
+      .trim();
+
+  return (
+    cleaned ||
+    "document"
+  );
 }
 
-function describeUploadError(e: unknown): string {
-  if (e instanceof Error && e.message) return e.message;
-  if (typeof e === "string" && e.trim()) return e;
+function describeUploadError(
+  e: unknown,
+): string {
+  if (
+    e instanceof Error &&
+    e.message
+  ) {
+    return e.message;
+  }
+
+  if (
+    typeof e ===
+      "string" &&
+    e.trim()
+  ) {
+    return e;
+  }
+
   if (
     e &&
-    typeof e === "object" &&
+    typeof e ===
+      "object" &&
     "message" in e &&
-    typeof (e as { message?: unknown }).message === "string"
+    typeof (
+      e as {
+        message?: unknown;
+      }
+    ).message ===
+      "string"
   ) {
-    return (e as { message: string }).message;
+    return (
+      e as {
+        message: string;
+      }
+    ).message;
   }
+
   return "Something went wrong uploading that file — mind trying again?";
 }
 
-const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
+const IMAGE_NAME_RE =
+  /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
 
-function isImageFile(file: File): boolean {
-  return file.type.startsWith("image/") || IMAGE_NAME_RE.test(file.name);
+function isImageFile(
+  file: File,
+): boolean {
+  return (
+    file.type.startsWith(
+      "image/",
+    ) ||
+    IMAGE_NAME_RE.test(
+      file.name,
+    )
+  );
 }
 
-function normalizeCourseCode(s: string): string {
-  return s.toUpperCase().replace(/[\s-]+/g, "");
+function normalizeCourseCode(
+  s: string,
+): string {
+  return s
+    .toUpperCase()
+    .replace(
+      /[\s-]+/g,
+      "",
+    );
 }
 
 // Auto-categorization: a document's own course code is almost always
@@ -88,77 +214,249 @@ function normalizeCourseCode(s: string): string {
 // scans the first ~4000 characters, since a course code buried deep in
 // a 40-page document's body text is far more likely to be a stray
 // reference to a DIFFERENT course than the one this document belongs to.
-function detectCourseCode(text: string, candidates: { code: string }[]): string | null {
-  if (candidates.length === 0) return null;
-  const known = new Map(candidates.map((c) => [normalizeCourseCode(c.code), c.code]));
-  const haystack = text.slice(0, 4000);
-  for (const m of haystack.matchAll(/\b([A-Za-z]{2,6})[\s-]?(\d{2,4}[A-Za-z]?)\b/g)) {
-    const hit = known.get(normalizeCourseCode(`${m[1]}${m[2]}`));
-    if (hit) return hit;
+function detectCourseCode(
+  text: string,
+  candidates: {
+    code: string;
+  }[],
+): string | null {
+  if (
+    candidates.length ===
+    0
+  ) {
+    return null;
   }
+
+  const known =
+    new Map(
+      candidates.map(
+        (
+          c,
+        ) => [
+          normalizeCourseCode(
+            c.code,
+          ),
+          c.code,
+        ],
+      ),
+    );
+
+  const haystack =
+    text.slice(
+      0,
+      4000,
+    );
+
+  for (
+    const m of haystack.matchAll(
+      /\b([A-Za-z]{2,6})[\s-]?(\d{2,4}[A-Za-z]?)\b/g,
+    )
+  ) {
+    const hit =
+      known.get(
+        normalizeCourseCode(
+          `${m[1]}${m[2]}`,
+        ),
+      );
+
+    if (hit) {
+      return hit;
+    }
+  }
+
   return null;
 }
 
 function runAIOffMainThread(
   text: string,
-  options: Parameters<typeof LearnovaAI.processDocument>[1],
-): Promise<ReturnType<typeof LearnovaAI.processDocument>> {
-  if (typeof Worker === "undefined") {
-    return Promise.resolve(LearnovaAI.processDocument(text, options));
+  options: Parameters<
+    typeof LearnovaAI.processDocument
+  >[1],
+): Promise<
+  ReturnType<
+    typeof LearnovaAI.processDocument
+  >
+> {
+  if (
+    typeof Worker ===
+    "undefined"
+  ) {
+    return Promise.resolve(
+      LearnovaAI.processDocument(
+        text,
+        options,
+      ),
+    );
   }
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let worker: Worker | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+  return new Promise(
+    (
+      resolve,
+      reject,
+    ) => {
+      let settled =
+        false;
 
-    const cleanup = () => {
-      if (timer !== null) clearTimeout(timer);
-      worker?.terminate();
-    };
+      let worker:
+        | Worker
+        | null = null;
 
-    const finish = (value: ReturnType<typeof LearnovaAI.processDocument>) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
+      let timer:
+        | ReturnType<
+            typeof setTimeout
+          >
+        | null = null;
 
-    const fail = (err: unknown) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(err instanceof Error ? err : new Error(String(err)));
-    };
+      const cleanup =
+        () => {
+          if (
+            timer !== null
+          ) {
+            clearTimeout(
+              timer,
+            );
+          }
 
-    const fallbackToMainThread = (reason: unknown) => {
-      console.error("AI worker unavailable, falling back to the main thread:", reason);
+          worker?.terminate();
+        };
+
+      const finish =
+        (
+          value: ReturnType<
+            typeof LearnovaAI.processDocument
+          >,
+        ) => {
+          if (
+            settled
+          ) {
+            return;
+          }
+
+          settled =
+            true;
+
+          cleanup();
+
+          resolve(
+            value,
+          );
+        };
+
+      const fail =
+        (
+          err: unknown,
+        ) => {
+          if (
+            settled
+          ) {
+            return;
+          }
+
+          settled =
+            true;
+
+          cleanup();
+
+          reject(
+            err instanceof
+              Error
+              ? err
+              : new Error(
+                  String(
+                    err,
+                  ),
+                ),
+          );
+        };
+
+      const fallbackToMainThread =
+        (
+          reason: unknown,
+        ) => {
+          console.error(
+            "AI worker unavailable, falling back to the main thread:",
+            reason,
+          );
+
+          try {
+            finish(
+              LearnovaAI.processDocument(
+                text,
+                options,
+              ),
+            );
+          } catch (
+            e
+          ) {
+            fail(
+              e,
+            );
+          }
+        };
+
       try {
-        finish(LearnovaAI.processDocument(text, options));
-      } catch (e) {
-        fail(e);
+        worker =
+          new Worker(
+            new URL(
+              "../lib/learnova-ai/worker.ts",
+              import.meta.url,
+            ),
+            {
+              type:
+                "module",
+            },
+          );
+      } catch (
+        e
+      ) {
+        fallbackToMainThread(
+          e,
+        );
+        return;
       }
-    };
 
-    try {
-      worker = new Worker(new URL("../lib/learnova-ai/worker.ts", import.meta.url), {
-        type: "module",
+      timer =
+        setTimeout(
+          () =>
+            fallbackToMainThread(
+              "timed out after 45s",
+            ),
+          45_000,
+        );
+
+      worker.onmessage =
+        (
+          e: MessageEvent,
+        ) => {
+          if (
+            e.data?.ok
+          ) {
+            finish(
+              e.data
+                .result,
+            );
+          } else {
+            fallbackToMainThread(
+              e.data
+                ?.error,
+            );
+          }
+        };
+
+      worker.onerror =
+        (
+          err,
+        ) =>
+          fallbackToMainThread(
+            err,
+          );
+
+      worker.postMessage({
+        text,
+        options,
       });
-    } catch (e) {
-      fallbackToMainThread(e);
-      return;
-    }
-
-    timer = setTimeout(() => fallbackToMainThread("timed out after 45s"), 45_000);
-
-    worker.onmessage = (e: MessageEvent) => {
-      if (e.data?.ok) finish(e.data.result);
-      else fallbackToMainThread(e.data?.error);
-    };
-    worker.onerror = (err) => fallbackToMainThread(err);
-
-    worker.postMessage({ text, options });
-  });
+    },
+  );
 }
 
 // Runs after the material row already exists with status "processing" —
@@ -167,314 +465,1010 @@ function runAIOffMainThread(
 // polls for it — see useMaterial in src/lib/queries.ts) instead of
 // staring at the upload screen for however long generation takes.
 //
-// Primary path: the real, Gemini-backed pipeline
-// (supabase/functions/process-material). It does its own DB writes and
-// its own per-stage status tracking, so on success there's nothing left
-// to do here.
+// Primary path: the real, server-side AI pipeline
+// (supabase/functions/process-material). It now uses:
+//
+//   Learnova primary gateway
+//          ↓
+//   OpenRouter secure fallback
+//          ↓
+//   OpenRouter model/provider fallback
 //
 // Fallback path: reached whenever that call itself couldn't be made
-// (thrown/network-level failure, not a normal in-band error — the edge
-// function handles its own errors and always still returns a response
-// on success). This used to only fall back to the local engine when
-// navigator.onLine was false — so a student who was online but hit a
-// misconfigured or temporarily-down AI gateway (say, a missing
-// LOVABLE_API_KEY) got nothing at all instead of a working local
-// version. The local LearnovaAI engine now runs on ANY primary failure,
-// online or not, so the student isn't left with a dead end either way —
-// tagged generation_source: "local-fallback" so the study page can be
-// honest about which kind of result it's showing and offer to
-// regenerate with the real thing once whatever broke is fixed.
-async function runBackgroundGeneration(params: {
-  materialId: string;
-  text: string;
-  title: string;
-  courseCode: string | null;
-  finalType: MaterialType;
-  validYear: number | null;
-  confidence: number;
-  model: AcademicDocumentModel;
-}): Promise<void> {
-  const { materialId, text, title, courseCode, finalType, validYear, confidence, model } = params;
-  let primaryError: unknown = null;
+// (network-level failure, unavailable edge function, etc.). The local
+// LearnovaAI engine still provides a final client-side safety net.
+async function runBackgroundGeneration(
+  params: {
+    materialId: string;
+    text: string;
+    title: string;
+    courseCode:
+      | string
+      | null;
+    finalType:
+      MaterialType;
+    validYear:
+      | number
+      | null;
+    confidence: number;
+    model:
+      AcademicDocumentModel;
+  },
+): Promise<void> {
+  const {
+    materialId,
+    text,
+    title,
+    courseCode,
+    finalType,
+    validYear,
+    confidence,
+    model,
+  } = params;
+
+  let primaryError:
+    | unknown
+    | null = null;
 
   try {
-    const { error } = await supabase.functions.invoke("process-material", {
-      body: { materialId, text, title, confidence, documentModel: model },
-    });
-    if (error) throw error;
+    const {
+      data,
+      error,
+    } =
+      await supabase.functions.invoke(
+        "process-material",
+        {
+          body: {
+            materialId,
+            text,
+            title,
+            confidence,
+            documentModel:
+              model,
+          },
+        },
+      );
+
+    if (
+      error
+    ) {
+      throw error;
+    }
+
+    // The edge function can return an explicit in-band failure response.
+    // Treat that as a failure rather than pretending the generation worked.
+    if (
+      data &&
+      typeof data ===
+        "object" &&
+      "ok" in data &&
+      (
+        data as {
+          ok?: unknown;
+        }
+      ).ok ===
+        false
+    ) {
+      throw new Error(
+        typeof (
+          data as {
+            error?: unknown;
+          }
+        ).error ===
+          "string"
+          ? (
+              data as {
+                error: string;
+              }
+            ).error
+          : "The server-side study generation failed.",
+      );
+    }
+
     return;
-  } catch (e) {
-    primaryError = e;
-    console.error("AI gateway call failed, falling back to the local engine:", e);
+  } catch (
+    e
+  ) {
+    primaryError =
+      e;
+
+    console.error(
+      "AI generation pipeline failed, falling back to the local engine:",
+      e,
+    );
 
     try {
-      const result = await runAIOffMainThread(text, {
-        title,
-        contentYear: validYear,
-        courseCode,
-        type: finalType,
-      });
-      const summary = safeDbText(result.summary) || null;
-      const tags = result.tags
-        .map((tag) => safeDbText(tag))
-        .filter(Boolean)
-        .slice(0, 10);
-      const flashcards = result.flashcards
-        .map((f) => ({
-          question: safeDbText(f.question),
-          answer: safeDbText(f.answer),
-          position: f.position,
-        }))
-        .filter((f) => f.question && f.answer);
-      const quiz = result.quiz
-        .map((q) => ({
-          question: safeDbText(q.question),
-          options: q.options
-            .map((option) => safeDbText(option))
-            .filter(Boolean)
-            .slice(0, 4),
-          correctIndex: Math.max(
+      const result =
+        await runAIOffMainThread(
+          text,
+          {
+            title,
+            contentYear:
+              validYear,
+            courseCode,
+            type:
+              finalType,
+          },
+        );
+
+      const summary =
+        safeDbText(
+          result.summary,
+        ) || null;
+
+      const tags =
+        result.tags
+          .map(
+            (
+              tag,
+            ) =>
+              safeDbText(
+                tag,
+              ),
+          )
+          .filter(Boolean)
+          .slice(
             0,
-            Math.min(q.options.length - 1, Number.isInteger(q.correctIndex) ? q.correctIndex : 0),
-          ),
-          explanation: safeDbText(q.explanation),
-          position: q.position,
-        }))
-        .filter((q) => q.question && q.options.length >= 2);
+            10,
+          );
+
+      const flashcards =
+        result.flashcards
+          .map(
+            (
+              f,
+            ) => ({
+              question:
+                safeDbText(
+                  f.question,
+                ),
+              answer:
+                safeDbText(
+                  f.answer,
+                ),
+              position:
+                f.position,
+            }),
+          )
+          .filter(
+            (
+              f,
+            ) =>
+              f.question &&
+              f.answer,
+          );
+
+      /**
+       * Rebuild quiz indexes after removing blank options.
+       *
+       * The local engine's correctIndex points into the original
+       * `q.options` array. Filtering blank options can shift positions,
+       * so we retain original indexes while cleaning the options.
+       */
+      const quiz =
+        result.quiz
+          .map(
+            (
+              q,
+            ) => {
+              const keptOptions =
+                q.options
+                  .map(
+                    (
+                      option,
+                      originalIndex,
+                    ) => ({
+                      value:
+                        safeDbText(
+                          option,
+                        ),
+                      originalIndex,
+                    }),
+                  )
+                  .filter(
+                    (
+                      option,
+                    ) =>
+                      option.value,
+                  )
+                  .slice(
+                    0,
+                    4,
+                  );
+
+              if (
+                keptOptions.length <
+                2
+              ) {
+                return null;
+              }
+
+              const originalCorrectIndex =
+                Number.isInteger(
+                  q.correctIndex,
+                )
+                  ? q.correctIndex
+                  : 0;
+
+              let correctIndex =
+                keptOptions.findIndex(
+                  (
+                    option,
+                  ) =>
+                    option.originalIndex ===
+                    originalCorrectIndex,
+                );
+
+              if (
+                correctIndex <
+                0
+              ) {
+                correctIndex =
+                  0;
+              }
+
+              return {
+                question:
+                  safeDbText(
+                    q.question,
+                  ),
+                options:
+                  keptOptions.map(
+                    (
+                      option,
+                    ) =>
+                      option.value,
+                  ),
+                correctIndex,
+                explanation:
+                  safeDbText(
+                    q.explanation,
+                  ),
+                position:
+                  q.position,
+              };
+            },
+          )
+          .filter(
+            (
+              q,
+            ): q is {
+              question: string;
+              options: string[];
+              correctIndex: number;
+              explanation: string;
+              position: number;
+            } =>
+              Boolean(q) &&
+              Boolean(
+                q.question,
+              ) &&
+              q.options
+                .length >=
+                2,
+          );
 
       // Fresh material, nothing to delete first — this only ever runs
-      // once, right after the row is created.
-      if (flashcards.length) {
-        await supabase.from("flashcards").insert(
-          flashcards.map((f) => ({
-            material_id: materialId,
-            question: f.question,
-            answer: f.answer,
-            position: f.position,
-          })),
-        );
-      }
-      if (quiz.length) {
-        await supabase.from("quiz_questions").insert(
-          quiz.map((q) => ({
-            material_id: materialId,
-            question: q.question,
-            options: q.options,
-            correct_index: q.correctIndex,
-            explanation: q.explanation,
-            position: q.position,
-          })),
-        );
+      // once immediately after the row is created.
+      if (
+        flashcards.length
+      ) {
+        const {
+          error:
+            flashcardError,
+        } =
+          await supabase
+            .from(
+              "flashcards",
+            )
+            .insert(
+              flashcards.map(
+                (
+                  f,
+                ) => ({
+                  material_id:
+                    materialId,
+                  question:
+                    f.question,
+                  answer:
+                    f.answer,
+                  position:
+                    f.position,
+                }),
+              ),
+            );
+
+        if (
+          flashcardError
+        ) {
+          console.error(
+            "Local fallback flashcard persistence failed:",
+            flashcardError,
+          );
+        }
       }
 
-      const anySucceeded = !!summary || flashcards.length > 0 || quiz.length > 0;
+      if (
+        quiz.length
+      ) {
+        const {
+          error:
+            quizError,
+        } =
+          await supabase
+            .from(
+              "quiz_questions",
+            )
+            .insert(
+              quiz.map(
+                (
+                  q,
+                ) => ({
+                  material_id:
+                    materialId,
+                  question:
+                    q.question,
+                  options:
+                    q.options,
+                  correct_index:
+                    q.correctIndex,
+                  explanation:
+                    q.explanation,
+                  position:
+                    q.position,
+                }),
+              ),
+            );
+
+        if (
+          quizError
+        ) {
+          console.error(
+            "Local fallback quiz persistence failed:",
+            quizError,
+          );
+        }
+      }
+
+      const anySucceeded =
+        Boolean(
+          summary,
+        ) ||
+        flashcards.length >
+          0 ||
+        quiz.length >
+          0;
+
+      const fallbackNote =
+        `Generated with the lighter local backup because the full server-side AI pipeline did not respond: ${describeUploadError(
+          primaryError,
+        )}.`;
+
+      const {
+        error:
+          updateError,
+      } =
+        await supabase
+          .from(
+            "materials",
+          )
+          .update({
+            status:
+              anySucceeded
+                ? "ready"
+                : "failed",
+
+            ...(summary
+              ? {
+                  summary,
+                  tags:
+                    tags.length
+                      ? tags
+                      : [],
+                }
+              : {}),
+
+            summary_status:
+              summary
+                ? "ready"
+                : "failed",
+
+            summary_error:
+              summary
+                ? null
+                : "The local backup couldn't produce a summary for this document.",
+
+            flashcards_status:
+              flashcards.length
+                ? "ready"
+                : "failed",
+
+            flashcards_error:
+              flashcards.length
+                ? null
+                : "The local backup couldn't produce flashcards for this document.",
+
+            quiz_status:
+              quiz.length
+                ? "ready"
+                : "failed",
+
+            quiz_error:
+              quiz.length
+                ? null
+                : "The local backup couldn't produce a quiz for this document.",
+
+            generation_source:
+              "local-fallback",
+
+            processing_error:
+              fallbackNote,
+
+            content_confidence:
+              confidence,
+
+            extraction_confidence:
+              confidence,
+
+            extraction_metadata:
+              {
+                fallback:
+                  "local-client-engine",
+                original_generation_error:
+                  describeUploadError(
+                    primaryError,
+                  ),
+                document_model_version:
+                  model.version,
+              },
+
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq(
+            "id",
+            materialId,
+          );
+
+      if (
+        updateError
+      ) {
+        console.error(
+          "Local fallback material update failed:",
+          updateError,
+        );
+      }
+    } catch (
+      fallbackError
+    ) {
+      console.error(
+        "Local fallback generation also failed:",
+        fallbackError,
+      );
+
       await supabase
-        .from("materials")
+        .from(
+          "materials",
+        )
         .update({
-          status: anySucceeded ? "ready" : "failed",
-          ...(summary ? { summary, tags: tags.length ? tags : [] } : {}),
-          summary_status: summary ? "ready" : "failed",
-          summary_error: summary
-            ? null
-            : "The local backup couldn't produce a summary for this document.",
-          flashcards_status: flashcards.length ? "ready" : "failed",
-          flashcards_error: flashcards.length
-            ? null
-            : "The local backup couldn't produce flashcards for this document.",
-          quiz_status: quiz.length ? "ready" : "failed",
-          quiz_error: quiz.length
-            ? null
-            : "The local backup couldn't produce a quiz for this document.",
-          generation_source: "local-fallback",
-          processing_error: anySucceeded
-            ? `Generated with a lighter local version — the full AI pipeline didn't respond (${describeUploadError(primaryError)}). Tap Regenerate to try it again.`
-            : `The AI pipeline didn't respond (${describeUploadError(primaryError)}), and the local backup couldn't find enough usable text either. Tap Regenerate to try again.`,
-          updated_at: new Date().toISOString(),
+          status:
+            "failed",
+          processing_error:
+            `${describeUploadError(
+              primaryError,
+            )} The local backup also failed: ${describeUploadError(
+              fallbackError,
+            )}`,
+          summary_status:
+            "failed",
+          flashcards_status:
+            "failed",
+          quiz_status:
+            "failed",
+          updated_at:
+            new Date().toISOString(),
         })
-        .eq("id", materialId);
-    } catch (fallbackError) {
-      console.error("Local fallback generation also failed:", fallbackError);
-      await supabase
-        .from("materials")
-        .update({
-          status: "failed",
-          processing_error: describeUploadError(primaryError),
-          summary_status: "failed",
-          flashcards_status: "failed",
-          quiz_status: "failed",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", materialId);
+        .eq(
+          "id",
+          materialId,
+        );
     }
   }
 }
 
-export function DocumentUpload({ courseCode }: { courseCode?: string }) {
-  const { user, profile } = useAuth();
-  const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
+export function DocumentUpload({
+  courseCode,
+}: {
+  courseCode?: string;
+}) {
+  const {
+    user,
+    profile,
+  } = useAuth();
+
+  const navigate =
+    useNavigate();
+
+  const inputRef =
+    useRef<HTMLInputElement>(
+      null,
+    );
 
   // Only fetched on the general Study-page uploader (no courseCode was
   // already given) — a course page's uploader already knows its course,
   // so there's nothing to detect and nothing worth fetching for it.
-  const { data: candidateCourses } = useCourses({
-    enabled: !courseCode,
-    programmeCode: profile?.programme_code ?? undefined,
-  });
+  const {
+    data:
+      candidateCourses,
+  } =
+    useCourses({
+      enabled:
+        !courseCode,
+      programmeCode:
+        profile?.programme_code ??
+        undefined,
+    });
 
-  const [type, setType] = useState<MaterialType>("Notes");
-  const [typeManuallySet, setTypeManuallySet] = useState(false);
-  const [contentYear, setContentYear] = useState("");
-  const [dragging, setDragging] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [stageIndex, setStageIndex] = useState(0);
-  const [fileLabel, setFileLabel] = useState<string | null>(null);
-  const [fileSizeMB, setFileSizeMB] = useState<number | null>(null);
-  const [ocrStage, setOcrStage] = useState<string | null>(null);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const [catalogueOnly, setCatalogueOnly] = useState(false);
+  const [
+    type,
+    setType,
+  ] =
+    useState<MaterialType>(
+      "Notes",
+    );
+
+  const [
+    typeManuallySet,
+    setTypeManuallySet,
+  ] =
+    useState(false);
+
+  const [
+    contentYear,
+    setContentYear,
+  ] =
+    useState("");
+
+  const [
+    dragging,
+    setDragging,
+  ] =
+    useState(false);
+
+  const [
+    busy,
+    setBusy,
+  ] =
+    useState(false);
+
+  const [
+    stageIndex,
+    setStageIndex,
+  ] =
+    useState(0);
+
+  const [
+    fileLabel,
+    setFileLabel,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    fileSizeMB,
+    setFileSizeMB,
+  ] =
+    useState<
+      number | null
+    >(null);
+
+  const [
+    ocrStage,
+    setOcrStage,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    ocrProgress,
+    setOcrProgress,
+  ] =
+    useState(0);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    done,
+    setDone,
+  ] =
+    useState(false);
+
+  const [
+    catalogueOnly,
+    setCatalogueOnly,
+  ] =
+    useState(false);
+
   // Several photos selected at once — held here until the person says
   // whether they're pages of one document or separate things.
-  const [pendingBundle, setPendingBundle] = useState<File[] | null>(null);
+  const [
+    pendingBundle,
+    setPendingBundle,
+  ] =
+    useState<
+      File[] | null
+    >(null);
+
   // "File 2 of 5" — only shown while uploading several *separate*
   // documents one after another.
-  const [batchLabel, setBatchLabel] = useState<string | null>(null);
+  const [
+    batchLabel,
+    setBatchLabel,
+  ] =
+    useState<
+      string | null
+    >(null);
 
   async function handleFile(
     file: File,
-    opts?: { navigateAfter?: boolean },
-  ): Promise<string | null> {
+    opts?: {
+      navigateAfter?: boolean;
+    },
+  ): Promise<
+    string | null
+  > {
     if (!user) {
-      setError("Sign in first — it takes a minute, and it's how we credit your upload.");
+      setError(
+        "Sign in first — it takes a minute, and it's how we credit your upload.",
+      );
+
       return null;
     }
-    if (file.size === 0) {
-      setError("That file looks empty (0 bytes) — try exporting or downloading it again.");
+
+    if (
+      file.size ===
+      0
+    ) {
+      setError(
+        "That file looks empty (0 bytes) — try exporting or downloading it again.",
+      );
+
       return null;
     }
 
     setError(null);
     setDone(false);
     setBusy(true);
-    setFileLabel(fileKindLabel(file));
-    setCatalogueOnly(false);
-    setFileSizeMB(file.size / (1024 * 1024));
+    setFileLabel(
+      fileKindLabel(
+        file,
+      ),
+    );
+    setCatalogueOnly(
+      false,
+    );
+    setFileSizeMB(
+      file.size /
+        (1024 * 1024),
+    );
     setStageIndex(0);
     setOcrStage(null);
     setOcrProgress(0);
 
-    let finalType: MaterialType = type;
-    if (!typeManuallySet) {
-      finalType = guessMaterialType(file.name);
-      setType(finalType);
+    let finalType:
+      MaterialType =
+      type;
+
+    if (
+      !typeManuallySet
+    ) {
+      finalType =
+        guessMaterialType(
+          file.name,
+        );
+
+      setType(
+        finalType,
+      );
     }
 
     try {
       // ensureFileExtension() covers files (very often ones saved via
       // WhatsApp on Android) whose name has no extension at all. This is
-      // a fast, local check (worst case reads 16 bytes off the file
+      // a fast, local check (worst case reads a few bytes off the file
       // itself), so it happens before the parallel step below rather
       // than adding a real delay of its own.
-      const originalName = await ensureFileExtension(safeFileName(file.name), file);
-      const title = safeDbText(originalName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
-      const path = `${user.id}/${crypto.randomUUID()}-${originalName}`;
+      const originalName =
+        await ensureFileExtension(
+          safeFileName(
+            file.name,
+          ),
+          file,
+        );
 
-      // Reading the document's text and uploading its raw bytes are
-      // independent of each other — both only need the original File —
-      // so they now run in parallel instead of one after another. This
-      // is what used to make uploads feel slow even for small files: a
-      // document needing OCR can take 20-30+ seconds just to read
-      // (fetching Tesseract's OCR engine over the network — see
-      // document-text.ts), during which the file itself, even a large
-      // one, now uploads in the background at the same time instead of
-      // only starting once reading finished.
-      const [{ text, pages, quality, confidence, confidenceNote, model }, uploadResult] =
+      const title =
+        safeDbText(
+          originalName.replace(
+            /\.[a-z0-9]+$/i,
+            "",
+          ),
+          "Untitled material",
+        );
+
+      const path =
+        `${user.id}/${crypto.randomUUID()}-${originalName}`;
+
+      // Text extraction and raw upload are independent, so run them
+      // together. Visual enhancement occurs after the raw upload has
+      // started/completed.
+      const [
+        localExtraction,
+        uploadResult,
+      ] =
         await Promise.all([
-          extractDocumentText(file, (p) => {
-            setOcrStage(p.stage);
-            setOcrProgress(p.progress);
-          }),
-          supabase.storage.from("materials").upload(path, file),
+          extractDocumentText(
+            file,
+            {
+              preferVisualAI:
+                true,
+              onProgress:
+                (p) => {
+                  setOcrStage(
+                    p.stage,
+                  );
+
+                  setOcrProgress(
+                    p.progress,
+                  );
+                },
+            },
+          ),
+          supabase.storage
+            .from(
+              "materials",
+            )
+            .upload(
+              path,
+              file,
+            ),
         ]);
-      if (uploadResult.error) throw uploadResult.error;
+
+      if (
+        uploadResult.error
+      ) {
+        throw uploadResult.error;
+      }
+
+      // Native text remains the fast path. Difficult/scanned pages and
+      // image-heavy documents receive a second pass through Puter OCR +
+      // multimodal vision. If Puter is unavailable, the visual layer
+      // securely falls through to OpenRouter.
+      setOcrStage(
+        "Understanding scanned pages, figures and images…",
+      );
+
+      const enhanced =
+        await enhanceDocumentWithVisualAI(
+          file,
+          localExtraction,
+          (
+            p,
+          ) => {
+            setOcrStage(
+              p.stage,
+            );
+
+            setOcrProgress(
+              p.progress,
+            );
+          },
+        );
+
+      const {
+        text,
+        pages,
+        quality,
+        confidence,
+        confidenceNote,
+        model,
+      } =
+        enhanced;
 
       // Refine the filename-only guess now that we have real content to
       // look at. Never overrides a category the person picked themselves.
-      if (!typeManuallySet && quality !== "none") {
-        finalType = (model.documentType as MaterialType) || guessMaterialType(file.name, text);
-        setType(finalType);
+      if (
+        !typeManuallySet &&
+        (
+          quality !==
+            "none" ||
+          model.visualFindings
+            .length >
+            0
+        )
+      ) {
+        finalType =
+          MATERIAL_TYPES.includes(
+            model.documentType as MaterialType,
+          )
+            ? (model.documentType as MaterialType)
+            : guessMaterialType(
+                file.name,
+                text,
+              );
+
+        setType(
+          finalType,
+        );
       }
 
-      const year = contentYear.trim() ? Number(contentYear.trim()) : null;
-      const validYear = year && Number.isFinite(year) ? year : null;
-      const tooLongForStudyTools = pages !== null && pages > STUDY_TOOL_PAGE_LIMIT;
-      setCatalogueOnly(tooLongForStudyTools);
-      // Confidence used to gate this outright (confidence >= 0.5) — but a
-      // low score was too often *wrong*, not a real signal of an unusable
-      // document (see qualitySignals / looksLikeUsableOcrText fixes).
-      // Now: attempt generation whenever there's any real text at all;
-      // confidence still gets stored and still shows an honest note on
-      // the study page, it just no longer blocks the attempt.
-      const willGenerate = !tooLongForStudyTools && text.trim().length > 0;
+      const year =
+        contentYear.trim()
+          ? Number(
+              contentYear.trim(),
+            )
+          : null;
 
-      // Save the material now — status "processing" if there's text worth
-      // generating study tools from, "catalog_only" if not. Generation
-      // itself happens after this (see below): the student is taken
-      // straight to the study page and watches it fill in live, rather
-      // than this screen blocking until the AI call finishes.
+      const validYear =
+        year &&
+        Number.isFinite(
+          year,
+        )
+          ? year
+          : null;
+
+      const tooLongForStudyTools =
+        pages !== null &&
+        pages >
+          STUDY_TOOL_PAGE_LIMIT;
+
+      setCatalogueOnly(
+        tooLongForStudyTools,
+      );
+
+      // Confidence no longer blocks generation. A document with weak but
+      // real OCR can still benefit from the server-side multimodal model.
+      const willGenerate =
+        !tooLongForStudyTools &&
+        text
+          .trim()
+          .length >
+          0;
+
       setStageIndex(1);
+
       const detectedCourseCode =
-        courseCode ?? (quality !== "none" ? detectCourseCode(text, candidateCourses ?? []) : null);
-      const { data: material, error: insertError } = await supabase
-        .from("materials")
-        .insert({
-          title,
-          course_code: detectedCourseCode,
-          type: finalType,
-          content_year: validYear,
-          pages,
-          file_path: path,
-          status: willGenerate ? "processing" : "catalog_only",
-          source: "student",
-          uploaded_by: user.id,
-          tags: [],
-          content_confidence: confidence,
-          extraction_confidence: confidence,
-          content_confidence_note: confidenceNote ?? null,
-          document_model: model,
-          extraction_metadata: {
-            format: model.format,
-            coverage: model.coverage,
-            signals: model.signals,
-            classification: {
-              type: model.documentType,
-              confidence: model.classificationConfidence,
-              evidence: model.classificationEvidence,
-            },
-          },
-          processing_error: tooLongForStudyTools
-            ? `This document is available for browsing and download, but its ${pages} pages exceed the ${STUDY_TOOL_PAGE_LIMIT}-page study-tool limit. Upload a selected page as an image for focused AI help.`
-            : null,
-          summary: tooLongForStudyTools
-            ? `This document has ${pages} pages, so Learnova saved it for browsing and download without generating a full study pack. For focused study, upload a screenshot or a smaller page range.`
-            : willGenerate
-              ? null
-              : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
-        })
-        .select()
-        .single();
-      if (insertError) throw insertError;
+        courseCode ??
+        (
+          quality !==
+          "none"
+            ? detectCourseCode(
+                text,
+                candidateCourses ??
+                  [],
+              )
+            : null
+        );
+
+      const {
+        data:
+          material,
+        error:
+          insertError,
+      } =
+        await supabase
+          .from(
+            "materials",
+          )
+          .insert({
+            title,
+            course_code:
+              detectedCourseCode,
+            type:
+              finalType,
+            content_year:
+              validYear,
+            pages,
+            file_path:
+              path,
+            status:
+              willGenerate
+                ? "processing"
+                : "catalog_only",
+            source:
+              "student",
+            uploaded_by:
+              user.id,
+            tags: [],
+            content_confidence:
+              confidence,
+            extraction_confidence:
+              confidence,
+            content_confidence_note:
+              confidenceNote ??
+              null,
+            document_model:
+              model,
+            extraction_metadata:
+              {
+                format:
+                  model.format,
+                extraction_model_version:
+                  model.version,
+                coverage:
+                  model.coverage,
+                signals:
+                  model.signals,
+                visual_findings:
+                  model
+                    .visualFindings
+                    .length,
+                visual_units:
+                  model
+                    .signals
+                    .visualUnitRatio,
+                sources:
+                  enhanced.sources ??
+                  [],
+                classification:
+                  {
+                    type:
+                      model.documentType,
+                    confidence:
+                      model.classificationConfidence,
+                    evidence:
+                      model.classificationEvidence,
+                  },
+                visual_ai:
+                  {
+                    primary:
+                      "puter",
+                    fallback:
+                      "openrouter-secure-edge-function",
+                  },
+              },
+            processing_error:
+              tooLongForStudyTools
+                ? `This document is available for browsing and download, but its ${pages} pages exceed the ${STUDY_TOOL_PAGE_LIMIT}-page study-tool limit. Upload a selected page as an image for focused AI help.`
+                : null,
+            summary:
+              tooLongForStudyTools
+                ? `This document has ${pages} pages, so Learnova saved it for browsing and download without generating a full study pack. For focused study, upload a screenshot or a smaller page range.`
+                : willGenerate
+                  ? null
+                  : "We couldn't automatically pull readable text out of this file, so there's no generated summary yet — but it's saved, downloadable, and part of the catalogue. Try re-uploading a text-based version (or ask an admin to take a look) if you'd like study tools for it.",
+          })
+          .select()
+          .single();
+
+      if (
+        insertError
+      ) {
+        throw insertError;
+      }
 
       setDone(true);
 
-      if (willGenerate) {
+      if (
+        willGenerate
+      ) {
         void runBackgroundGeneration({
-          materialId: material.id,
-          text: safeDbText(text),
+          materialId:
+            material.id,
+          text:
+            safeDbText(
+              text,
+            ),
           title,
-          courseCode: courseCode ?? null,
+          courseCode:
+            detectedCourseCode,
           finalType,
           validYear,
           confidence,
@@ -482,16 +1476,42 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         });
       }
 
-      if (opts?.navigateAfter ?? true) {
-        setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
+      if (
+        opts?.navigateAfter ??
+        true
+      ) {
+        setTimeout(
+          () =>
+            navigate({
+              to: "/study/$id",
+              params: {
+                id: material.id,
+              },
+            }),
+          400,
+        );
       }
+
       return material.id;
-    } catch (e) {
-      console.error("Upload failed:", e);
-      setError(describeUploadError(e));
+    } catch (
+      e
+    ) {
+      console.error(
+        "Upload failed:",
+        e,
+      );
+
+      setError(
+        describeUploadError(
+          e,
+        ),
+      );
+
       return null;
     } finally {
-      setBusy(false);
+      setBusy(
+        false,
+      );
     }
   }
 
@@ -499,229 +1519,759 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   // one document or separate things, rather than assuming either way.
   // Anything else (one file, or a mixed-type multi-select) has nothing
   // sensible to combine, so it goes straight through.
-  function handleFiles(files: File[]) {
-    if (files.length === 0) return;
-    if (files.length === 1) {
-      void handleFile(files[0]);
+  function handleFiles(
+    files: File[],
+  ) {
+    if (
+      files.length ===
+      0
+    ) {
       return;
     }
-    if (files.every(isImageFile)) {
-      setPendingBundle(files);
+
+    if (
+      files.length ===
+      1
+    ) {
+      void handleFile(
+        files[0],
+      );
+
       return;
     }
-    void handleSeparateFiles(files);
+
+    if (
+      files.every(
+        isImageFile,
+      )
+    ) {
+      setPendingBundle(
+        files,
+      );
+
+      return;
+    }
+
+    void handleSeparateFiles(
+      files,
+    );
   }
 
   // Several separate documents, uploaded one after another rather than
   // combined — each becomes its own material via the exact same path a
   // single upload takes. Best-effort: one bad file doesn't stop the
   // rest, and whatever fails is summarised at the end instead of
-  // silently vanishing (the single biggest risk of looping handleFile
-  // is failures being invisible, since a later success would otherwise
-  // just overwrite the earlier error on screen).
-  async function handleSeparateFiles(files: File[]) {
-    let lastSucceededId: string | null = null;
+  // silently vanishing.
+  async function handleSeparateFiles(
+    files: File[],
+  ) {
+    let lastSucceededId:
+      | string
+      | null = null;
+
     let failures = 0;
-    for (let i = 0; i < files.length; i++) {
-      setBatchLabel(`File ${i + 1} of ${files.length}`);
-      const id = await handleFile(files[i], { navigateAfter: false });
-      if (id) lastSucceededId = id;
-      else failures += 1;
+
+    for (
+      let i = 0;
+      i <
+      files.length;
+      i++
+    ) {
+      setBatchLabel(
+        `File ${
+          i + 1
+        } of ${
+          files.length
+        }`,
+      );
+
+      const id =
+        await handleFile(
+          files[i],
+          {
+            navigateAfter:
+              false,
+          },
+        );
+
+      if (id) {
+        lastSucceededId =
+          id;
+      } else {
+        failures +=
+          1;
+      }
     }
-    setBatchLabel(null);
-    if (failures > 0) {
+
+    setBatchLabel(
+      null,
+    );
+
+    if (
+      failures > 0
+    ) {
       toast.error(
-        failures === files.length
+        failures ===
+          files.length
           ? "None of those uploaded — check your connection and try again."
-          : `${files.length - failures} of ${files.length} uploaded. ${failures} didn't make it — try those again.`,
+          : `${
+              files.length -
+              failures
+            } of ${
+              files.length
+            } uploaded. ${failures} didn't make it — try those again.`,
       );
     }
-    if (lastSucceededId) {
-      const id = lastSucceededId;
-      setTimeout(() => navigate({ to: "/study/$id", params: { id } }), 400);
+
+    if (
+      lastSucceededId
+    ) {
+      const id =
+        lastSucceededId;
+
+      setTimeout(
+        () =>
+          navigate({
+            to: "/study/$id",
+            params: {
+              id,
+            },
+          }),
+        400,
+      );
     }
   }
 
-  // The actual bundling feature: N photos become ONE material with N
-  // ordered pages (materials.file_path = page 1 / the cover,
-  // extra_file_paths = the rest), instead of forcing one upload — and
-  // one entry in the catalogue — per photo. Each image is still read
-  // through the exact same OCR pipeline as a single-image upload; the
-  // only difference is everything lands on one material row instead of
-  // several, with the pages concatenated (in order, clearly marked) for
-  // the AI pipeline to read as one document.
-  async function handleImageBundle(files: File[]) {
+  // N photos become ONE material with ordered pages:
+  // file_path = page 1
+  // extra_file_paths = pages 2...N
+  //
+  // Each page receives the exact same extraction + visual intelligence
+  // pipeline and then the resulting document models are merged.
+  async function handleImageBundle(
+    files: File[],
+  ) {
     if (!user) {
-      setError("Sign in first — it takes a minute, and it's how we credit your upload.");
+      setError(
+        "Sign in first — it takes a minute, and it's how we credit your upload.",
+      );
+
       return;
     }
-    if (files.some((f) => f.size === 0)) {
-      setError("One of those photos looks empty (0 bytes) — try again.");
+
+    if (
+      files.some(
+        (
+          f,
+        ) =>
+          f.size ===
+          0,
+      )
+    ) {
+      setError(
+        "One of those photos looks empty (0 bytes) — try again.",
+      );
+
       return;
     }
 
     setError(null);
     setDone(false);
     setBusy(true);
-    setFileLabel(`${files.length}-page bundle`);
-    setFileSizeMB(files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024));
+
+    setFileLabel(
+      `${files.length}-page bundle`,
+    );
+
+    setFileSizeMB(
+      files.reduce(
+        (
+          sum,
+          f,
+        ) =>
+          sum +
+          f.size,
+        0,
+      ) /
+        (1024 *
+          1024),
+    );
+
     setStageIndex(0);
     setOcrStage(null);
     setOcrProgress(0);
 
-    let finalType: MaterialType = type;
-    if (!typeManuallySet) {
-      finalType = guessMaterialType(files[0].name);
-      setType(finalType);
+    let finalType:
+      MaterialType =
+      type;
+
+    if (
+      !typeManuallySet
+    ) {
+      finalType =
+        guessMaterialType(
+          files[0]
+            .name,
+        );
+
+      setType(
+        finalType,
+      );
     }
 
     try {
-      const bundleId = crypto.randomUUID();
-      const pageResults: {
+      const bundleId =
+        crypto.randomUUID();
+
+      const pageResults: Array<{
         path: string;
         text: string;
         quality: string;
-        confidence: number | null;
-        model: AcademicDocumentModel;
-      }[] = [];
+        confidence:
+          | number
+          | null;
+        model:
+          AcademicDocumentModel;
+      }> = [];
 
-      const extractionPromise = extractDocumentBatch(files, (fileIndex, progress) => {
-        setOcrStage(`Reading page ${fileIndex + 1} of ${files.length}…`);
-        setOcrProgress(progress.progress);
-      });
-      const uploadPromises = files.map(async (file, index) => {
-        const originalName = await ensureFileExtension(safeFileName(file.name), file);
-        const path = `${user.id}/${bundleId}-page-${index + 1}-${originalName}`;
-        const result = await supabase.storage.from("materials").upload(path, file);
-        if (result.error) throw result.error;
-        return path;
-      });
-      const [extractions, paths] = await Promise.all([
-        extractionPromise,
-        Promise.all(uploadPromises),
-      ]);
+      const extractionPromise =
+        extractDocumentBatch(
+          files,
+          {
+            preferVisualAI:
+              true,
+            onProgress:
+              (
+                fileIndex,
+                progress,
+              ) => {
+                setOcrStage(
+                  `Reading page ${
+                    fileIndex +
+                    1
+                  } of ${
+                    files.length
+                  }…`,
+                );
 
-      for (let i = 0; i < files.length; i++) {
-        const { text, quality, confidence, model } = extractions[i];
-        pageResults.push({ path: paths[i], text, quality, confidence: confidence ?? null, model });
-      }
-
-      if (!typeManuallySet) {
-        const combinedForGuess = pageResults.map((p) => p.text).join("\n");
-        if (pageResults.some((p) => p.quality !== "none")) {
-          finalType = guessMaterialType(files[0].name, combinedForGuess);
-          setType(finalType);
-        }
-      }
-
-      const year = contentYear.trim() ? Number(contentYear.trim()) : null;
-      const validYear = year && Number.isFinite(year) ? year : null;
-      const combinedText = pageResults.map((p, i) => `[Page ${i + 1}]\n${p.text}`).join("\n\n");
-      const readablePages = pageResults.filter((p) => p.quality !== "none").length;
-      const confidenceValues = pageResults
-        .map((p) => p.confidence)
-        .filter((c): c is number => c !== null);
-      const confidence = confidenceValues.length ? Math.min(...confidenceValues) : null;
-      const tooLongForStudyTools = pageResults.length > STUDY_TOOL_PAGE_LIMIT;
-      setCatalogueOnly(tooLongForStudyTools);
-      const willGenerate = !tooLongForStudyTools && combinedText.trim().length > 0;
-      const confidenceNote =
-        readablePages < pageResults.length
-          ? `${pageResults.length - readablePages} of ${pageResults.length} pages didn't have any readable text.`
-          : null;
-      const bundleModel: AcademicDocumentModel = {
-        ...pageResults[0].model,
-        format: "image-bundle",
-        units: pageResults.flatMap((page, pageIndex) =>
-          page.model.units.map((unit) => ({
-            ...unit,
-            index: pageIndex + 1,
-            label: `Page ${pageIndex + 1}`,
-          })),
-        ),
-        coverage: readablePages / pageResults.length,
-        extractionConfidence: confidence ?? 0,
-      };
-
-      const originalFirstName = await ensureFileExtension(safeFileName(files[0].name), files[0]);
-      const title = safeDbText(originalFirstName.replace(/\.[a-z0-9]+$/i, ""), "Untitled material");
-
-      setStageIndex(1);
-      const detectedCourseCode =
-        courseCode ??
-        (willGenerate ? detectCourseCode(combinedText, candidateCourses ?? []) : null);
-      const { data: material, error: insertError } = await supabase
-        .from("materials")
-        .insert({
-          title,
-          course_code: detectedCourseCode,
-          type: finalType,
-          content_year: validYear,
-          pages: pageResults.length,
-          file_path: pageResults[0].path,
-          extra_file_paths: pageResults.slice(1).map((p) => p.path),
-          status: willGenerate ? "processing" : "catalog_only",
-          source: "student",
-          uploaded_by: user.id,
-          tags: [],
-          content_confidence: confidence,
-          extraction_confidence: confidence,
-          content_confidence_note: confidenceNote,
-          document_model: bundleModel,
-          extraction_metadata: {
-            format: "image-bundle",
-            coverage: bundleModel.coverage,
-            signals: bundleModel.signals,
+                setOcrProgress(
+                  progress.progress,
+                );
+              },
           },
-          processing_error: tooLongForStudyTools
-            ? `This ${pageResults.length}-page bundle is saved for browsing and download, but exceeds the ${STUDY_TOOL_PAGE_LIMIT}-page study-tool limit. Upload selected pages as images for focused AI help.`
-            : null,
-          summary: willGenerate
-            ? null
-            : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
-        })
-        .select()
-        .single();
-      if (insertError) throw insertError;
+        );
 
-      setDone(true);
+      const uploadPromises =
+        files.map(
+          async (
+            file,
+            index,
+          ) => {
+            const originalName =
+              await ensureFileExtension(
+                safeFileName(
+                  file.name,
+                ),
+                file,
+              );
 
-      if (willGenerate) {
-        void runBackgroundGeneration({
-          materialId: material.id,
-          text: safeDbText(combinedText),
-          title,
-          courseCode: courseCode ?? null,
-          finalType,
-          validYear,
-          confidence: confidence ?? 0,
-          model: bundleModel,
+            const path =
+              `${user.id}/${bundleId}-page-${
+                index + 1
+              }-${originalName}`;
+
+            const result =
+              await supabase.storage
+                .from(
+                  "materials",
+                )
+                .upload(
+                  path,
+                  file,
+                );
+
+            if (
+              result.error
+            ) {
+              throw result.error;
+            }
+
+            return path;
+          },
+        );
+
+      const [
+        localExtractions,
+        paths,
+      ] =
+        await Promise.all([
+          extractionPromise,
+          Promise.all(
+            uploadPromises,
+          ),
+        ]);
+
+      setOcrStage(
+        "Understanding scanned pages, figures and images…",
+      );
+
+      const extractions =
+        await enhanceDocumentBatchWithVisualAI(
+          files,
+          localExtractions,
+          (
+            fileIndex,
+            progress,
+          ) => {
+            setOcrStage(
+              `Page ${
+                fileIndex +
+                1
+              }: ${
+                progress.stage
+              }`,
+            );
+
+            setOcrProgress(
+              progress.progress,
+            );
+          },
+        );
+
+      for (
+        let i = 0;
+        i <
+        files.length;
+        i++
+      ) {
+        const {
+          text,
+          quality,
+          confidence,
+          model,
+        } =
+          extractions[i];
+
+        pageResults.push({
+          path:
+            paths[i],
+          text,
+          quality,
+          confidence:
+            confidence ??
+            null,
+          model,
         });
       }
 
-      setTimeout(() => navigate({ to: "/study/$id", params: { id: material.id } }), 400);
-    } catch (e) {
-      console.error("Bundle upload failed:", e);
-      setError(describeUploadError(e));
+      if (
+        !typeManuallySet
+      ) {
+        const combinedForGuess =
+          pageResults
+            .map(
+              (
+                p,
+              ) =>
+                p.text,
+            )
+            .join(
+              "\n",
+            );
+
+        if (
+          pageResults.some(
+            (
+              p,
+            ) =>
+              p.quality !==
+              "none",
+          )
+        ) {
+          finalType =
+            guessMaterialType(
+              files[0]
+                .name,
+              combinedForGuess,
+            );
+
+          setType(
+            finalType,
+          );
+        }
+      }
+
+      const year =
+        contentYear.trim()
+          ? Number(
+              contentYear.trim(),
+            )
+          : null;
+
+      const validYear =
+        year &&
+        Number.isFinite(
+          year,
+        )
+          ? year
+          : null;
+
+      const combinedText =
+        pageResults
+          .map(
+            (
+              p,
+              i,
+            ) =>
+              `[Page ${
+                i + 1
+              }]\n${p.text}`,
+          )
+          .join(
+            "\n\n",
+          );
+
+      const readablePages =
+        pageResults.filter(
+          (
+            p,
+          ) =>
+            p.quality !==
+              "none" ||
+            p.model
+              .visualFindings
+              .length >
+              0,
+        ).length;
+
+      const confidenceValues =
+        pageResults
+          .map(
+            (
+              p,
+            ) =>
+              p.confidence,
+          )
+          .filter(
+            (
+              c,
+            ): c is number =>
+              c !== null &&
+              Number.isFinite(
+                c,
+              ),
+          );
+
+      const averageConfidence =
+        confidenceValues.length
+          ? confidenceValues.reduce(
+              (
+                sum,
+                value,
+              ) =>
+                sum +
+                value,
+              0,
+            ) /
+            confidenceValues.length
+          : 0;
+
+      const coverage =
+        pageResults.length
+          ? readablePages /
+            pageResults.length
+          : 0;
+
+      const confidence =
+        Math.round(
+          Math.min(
+            0.98,
+            averageConfidence *
+              0.78 +
+              coverage *
+                0.22,
+          ) *
+            100,
+        ) / 100;
+
+      const tooLongForStudyTools =
+        pageResults.length >
+        STUDY_TOOL_PAGE_LIMIT;
+
+      setCatalogueOnly(
+        tooLongForStudyTools,
+      );
+
+      const willGenerate =
+        !tooLongForStudyTools &&
+        combinedText
+          .trim()
+          .length >
+          0;
+
+      const confidenceNote =
+        readablePages <
+        pageResults.length
+          ? `${
+              pageResults.length -
+              readablePages
+            } of ${
+              pageResults.length
+            } pages still have no reliable text or visual interpretation.`
+          : null;
+
+      const bundleModel =
+        buildAcademicDocumentModel(
+          {
+            format:
+              "image-bundle",
+            units:
+              pageResults.flatMap(
+                (
+                  page,
+                  pageIndex,
+                ) =>
+                  page.model.units.map(
+                    (
+                      unit,
+                    ) => ({
+                      label:
+                        `Page ${
+                          pageIndex +
+                          1
+                        } — ${
+                          unit.label
+                        }`,
+                      text:
+                        unit.text,
+                      extraction:
+                        unit.extraction,
+                      confidence:
+                        unit.confidence,
+                      visualFindings:
+                        unit.visualFindings,
+                    }),
+                  ),
+              ),
+          },
+        );
+
+      const originalFirstName =
+        await ensureFileExtension(
+          safeFileName(
+            files[0].name,
+          ),
+          files[0],
+        );
+
+      const title =
+        safeDbText(
+          originalFirstName.replace(
+            /\.[a-z0-9]+$/i,
+            "",
+          ),
+          "Untitled material",
+        );
+
+      setStageIndex(1);
+
+      const detectedCourseCode =
+        courseCode ??
+        (
+          willGenerate
+            ? detectCourseCode(
+                combinedText,
+                candidateCourses ??
+                  [],
+              )
+            : null
+        );
+
+      const {
+        data:
+          material,
+        error:
+          insertError,
+      } =
+        await supabase
+          .from(
+            "materials",
+          )
+          .insert({
+            title,
+            course_code:
+              detectedCourseCode,
+            type:
+              finalType,
+            content_year:
+              validYear,
+            pages:
+              pageResults.length,
+            file_path:
+              pageResults[0]
+                .path,
+            extra_file_paths:
+              pageResults
+                .slice(
+                  1,
+                )
+                .map(
+                  (
+                    p,
+                  ) =>
+                    p.path,
+                ),
+            status:
+              willGenerate
+                ? "processing"
+                : "catalog_only",
+            source:
+              "student",
+            uploaded_by:
+              user.id,
+            tags: [],
+            content_confidence:
+              confidence,
+            extraction_confidence:
+              confidence,
+            content_confidence_note:
+              confidenceNote,
+            document_model:
+              bundleModel,
+            extraction_metadata:
+              {
+                format:
+                  "image-bundle",
+                extraction_model_version:
+                  bundleModel.version,
+                coverage:
+                  bundleModel.coverage,
+                signals:
+                  bundleModel.signals,
+                visual_findings:
+                  bundleModel
+                    .visualFindings
+                    .length,
+                sources:
+                  pageResults.flatMap(
+                    (
+                      p,
+                    ) =>
+                      p.model
+                        .visualFindings,
+                  ).length
+                    ? [
+                        "Puter visual analysis and secure OpenRouter fallback enabled for bundle pages",
+                      ]
+                    : [],
+                classification:
+                  {
+                    type:
+                      bundleModel.documentType,
+                    confidence:
+                      bundleModel.classificationConfidence,
+                    evidence:
+                      bundleModel.classificationEvidence,
+                  },
+              },
+            processing_error:
+              tooLongForStudyTools
+                ? `This ${pageResults.length}-page bundle is saved for browsing and download, but exceeds the ${STUDY_TOOL_PAGE_LIMIT}-page study-tool limit. Upload selected pages as images for focused AI help.`
+                : null,
+            summary:
+              willGenerate
+                ? null
+                : "We couldn't automatically pull readable text out of these photos, so there's no generated summary yet — but they're saved, downloadable, and part of the catalogue.",
+          })
+          .select()
+          .single();
+
+      if (
+        insertError
+      ) {
+        throw insertError;
+      }
+
+      setDone(true);
+
+      if (
+        willGenerate
+      ) {
+        void runBackgroundGeneration({
+          materialId:
+            material.id,
+          text:
+            safeDbText(
+              combinedText,
+            ),
+          title,
+          courseCode:
+            detectedCourseCode,
+          finalType,
+          validYear,
+          confidence:
+            confidence ?? 0,
+          model:
+            bundleModel,
+        });
+      }
+
+      setTimeout(
+        () =>
+          navigate({
+            to: "/study/$id",
+            params: {
+              id: material.id,
+            },
+          }),
+        400,
+      );
+    } catch (
+      e
+    ) {
+      console.error(
+        "Bundle upload failed:",
+        e,
+      );
+
+      setError(
+        describeUploadError(
+          e,
+        ),
+      );
     } finally {
-      setBusy(false);
+      setBusy(
+        false,
+      );
     }
   }
 
-  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+  function onDrop(
+    e: React.DragEvent<HTMLDivElement>,
+  ) {
     e.preventDefault();
-    setDragging(false);
-    const files = Array.from(e.dataTransfer.files ?? []);
-    if (files.length) handleFiles(files);
+
+    setDragging(
+      false,
+    );
+
+    const files =
+      Array.from(
+        e.dataTransfer.files ??
+          [],
+      );
+
+    if (
+      files.length
+    ) {
+      handleFiles(
+        files,
+      );
+    }
   }
 
   // Signed-out visitors can browse and read everything, but uploading
-  // needs an account (it credits the upload to someone, and it's how
-  // the material ends up on a real programme/course). This used to let
-  // anyone pick a file, sit through OCR, and only THEN find out — via a
-  // small inline error easy to miss — that none of it was going
-  // anywhere. Now there's nothing to interact with here at all until
-  // they're signed in; the file picker never even opens.
+  // needs an account.
   if (!user) {
     return (
       <Link
@@ -729,10 +2279,14 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border bg-surface-muted p-8 text-center transition-colors hover:border-primary/40"
       >
         <LogIn className="h-6 w-6 text-copper" />
-        <div className="text-sm font-semibold text-foreground">Sign in to upload</div>
+
+        <div className="text-sm font-semibold text-foreground">
+          Sign in to upload
+        </div>
+
         <p className="max-w-xs text-xs text-muted-foreground">
-          Takes under a minute — once you're in, this becomes a summary, flashcards and a quiz for
-          you and everyone after you.
+          Takes under a minute — once you're in, this becomes a summary,
+          flashcards and a quiz for you and everyone after you.
         </p>
       </Link>
     );
@@ -741,38 +2295,94 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   return (
     <div>
       <p className="mb-1.5 text-[11px] text-muted-foreground">
-        We'll guess a category from the file itself — tap one below anytime to set it yourself.
+        We'll guess a category from the file itself — tap one below
+        anytime to set it yourself.
       </p>
+
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        {MATERIAL_TYPES.map((t) => (
-          <button
-            key={t}
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setType(t);
-              setTypeManuallySet(true);
-            }}
-            className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-              type === t
-                ? "bg-primary text-primary-foreground"
-                : "bg-surface-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+        {MATERIAL_TYPES.map(
+          (
+            t,
+          ) => (
+            <button
+              key={
+                t
+              }
+              type="button"
+              disabled={
+                busy
+              }
+              onClick={() => {
+                setType(
+                  t,
+                );
+
+                setTypeManuallySet(
+                  true,
+                );
+              }}
+              className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                type ===
+                t
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-surface-muted text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {
+                t
+              }
+            </button>
+          ),
+        )}
+
         <AnimatePresence>
-          {type === "Past Paper" && (
+          {type ===
+            "Past Paper" && (
             <motion.input
               key="year-input"
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 88 }}
-              exit={{ opacity: 0, width: 0 }}
-              transition={{ duration: 0.18 }}
-              value={contentYear}
-              onChange={(e) => setContentYear(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
-              disabled={busy}
+              initial={{
+                opacity:
+                  0,
+                width:
+                  0,
+              }}
+              animate={{
+                opacity:
+                  1,
+                width:
+                  88,
+              }}
+              exit={{
+                opacity:
+                  0,
+                width:
+                  0,
+              }}
+              transition={{
+                duration:
+                  0.18,
+              }}
+              value={
+                contentYear
+              }
+              onChange={(
+                e,
+              ) =>
+                setContentYear(
+                  e.target.value
+                    .replace(
+                      /[^0-9]/g,
+                      "",
+                    )
+                    .slice(
+                      0,
+                      4,
+                    ),
+                )
+              }
+              disabled={
+                busy
+              }
               placeholder="Year"
               inputMode="numeric"
               className="rounded-lg border border-input bg-surface px-2.5 py-1 text-[11px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
@@ -784,42 +2394,82 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
       {pendingBundle ? (
         <div className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 p-5">
           <p className="text-sm font-semibold text-foreground">
-            {pendingBundle.length} photos selected
+            {
+              pendingBundle.length
+            }{" "}
+            photos selected
           </p>
+
           <p className="mt-1 text-xs text-muted-foreground">
-            Are these pages of the same document — like a multi-page test — or separate things?
+            Are these pages of the same document — like a multi-page test
+            — or separate things?
           </p>
+
           <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-            {pendingBundle.map((f, i) => (
-              <BundleThumb key={`${f.name}-${i}`} file={f} index={i} />
-            ))}
+            {pendingBundle.map(
+              (
+                f,
+                i,
+              ) => (
+                <BundleThumb
+                  key={`${f.name}-${i}`}
+                  file={
+                    f
+                  }
+                  index={
+                    i
+                  }
+                />
+              ),
+            )}
           </div>
+
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
-                const files = pendingBundle;
-                setPendingBundle(null);
-                void handleImageBundle(files);
+                const files =
+                  pendingBundle;
+
+                setPendingBundle(
+                  null,
+                );
+
+                void handleImageBundle(
+                  files,
+                );
               }}
               className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition-transform hover:scale-[1.02] active:scale-100"
             >
               Combine into one document
             </button>
+
             <button
               type="button"
               onClick={() => {
-                const files = pendingBundle;
-                setPendingBundle(null);
-                void handleSeparateFiles(files);
+                const files =
+                  pendingBundle;
+
+                setPendingBundle(
+                  null,
+                );
+
+                void handleSeparateFiles(
+                  files,
+                );
               }}
               className="rounded-xl border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground hover:bg-surface-muted"
             >
               Upload separately
             </button>
+
             <button
               type="button"
-              onClick={() => setPendingBundle(null)}
+              onClick={() =>
+                setPendingBundle(
+                  null,
+                )
+              }
               className="rounded-xl px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
             >
               Cancel
@@ -828,14 +2478,43 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
         </div>
       ) : (
         <motion.div
-          onDragOver={(e) => {
+          onDragOver={(
+            e,
+          ) => {
             e.preventDefault();
-            if (!busy) setDragging(true);
+
+            if (
+              !busy
+            ) {
+              setDragging(
+                true,
+              );
+            }
           }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={busy ? undefined : onDrop}
-          animate={{ scale: dragging ? 1.015 : 1 }}
-          transition={{ type: "spring", stiffness: 300, damping: 24 }}
+          onDragLeave={() =>
+            setDragging(
+              false,
+            )
+          }
+          onDrop={
+            busy
+              ? undefined
+              : onDrop
+          }
+          animate={{
+            scale:
+              dragging
+                ? 1.015
+                : 1,
+          }}
+          transition={{
+            type:
+              "spring",
+            stiffness:
+              300,
+            damping:
+              24,
+          }}
         >
           <label
             className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
@@ -851,15 +2530,35 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
             }`}
           >
             <input
-              ref={inputRef}
+              ref={
+                inputRef
+              }
               type="file"
               multiple
               className="hidden"
-              disabled={busy}
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                if (files.length) handleFiles(files);
-                e.target.value = "";
+              disabled={
+                busy
+              }
+              onChange={(
+                e,
+              ) => {
+                const files =
+                  Array.from(
+                    e.target
+                      .files ??
+                      [],
+                  );
+
+                if (
+                  files.length
+                ) {
+                  handleFiles(
+                    files,
+                  );
+                }
+
+                e.target.value =
+                  "";
               }}
             />
 
@@ -867,58 +2566,126 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
               {done ? (
                 <motion.div
                   key="done"
-                  initial={{ scale: 0.7, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
+                  initial={{
+                    scale:
+                      0.7,
+                    opacity:
+                      0,
+                  }}
+                  animate={{
+                    scale:
+                      1,
+                    opacity:
+                      1,
+                  }}
                   className="grid h-6 w-6 place-items-center"
                 >
                   <CheckCircle2 className="h-6 w-6 text-teal" />
                 </motion.div>
               ) : busy ? (
-                <motion.div key="busy" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <motion.div
+                  key="busy"
+                  initial={{
+                    opacity:
+                      0,
+                  }}
+                  animate={{
+                    opacity:
+                      1,
+                  }}
+                >
                   <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 </motion.div>
               ) : error ? (
                 <motion.div
                   key="error"
-                  initial={{ scale: 0.7, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
+                  initial={{
+                    scale:
+                      0.7,
+                    opacity:
+                      0,
+                  }}
+                  animate={{
+                    scale:
+                      1,
+                    opacity:
+                      1,
+                  }}
                 >
                   <FileWarning className="h-6 w-6 text-destructive" />
                 </motion.div>
               ) : (
-                <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <motion.div
+                  key="idle"
+                  initial={{
+                    opacity:
+                      0,
+                  }}
+                  animate={{
+                    opacity:
+                      1,
+                  }}
+                >
                   <Upload className="h-6 w-6 text-copper" />
                 </motion.div>
               )}
             </AnimatePresence>
 
             <div className="text-sm font-semibold text-foreground">
-              {busy && batchLabel && (
-                <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-copper">
-                  {batchLabel}
-                </div>
-              )}
+              {busy &&
+                batchLabel && (
+                  <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-copper">
+                    {
+                      batchLabel
+                    }
+                  </div>
+                )}
+
               <AnimatePresence mode="wait">
                 <motion.span
                   key={
                     busy
-                      ? stageIndex === 0 && ocrStage
+                      ? stageIndex ===
+                          0 &&
+                        ocrStage
                         ? ocrStage
-                        : STAGES[stageIndex]
+                        : STAGES[
+                            stageIndex
+                          ]
                       : done
                         ? "done"
                         : "idle"
                   }
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.15 }}
+                  initial={{
+                    opacity:
+                      0,
+                    y: 4,
+                  }}
+                  animate={{
+                    opacity:
+                      1,
+                    y: 0,
+                  }}
+                  exit={{
+                    opacity:
+                      0,
+                    y:
+                      -4,
+                  }}
+                  transition={{
+                    duration:
+                      0.15,
+                  }}
                   className="inline-block"
                 >
                   {busy
-                    ? stageIndex === 0 && ocrStage
+                    ? stageIndex ===
+                          0 &&
+                        ocrStage
                       ? ocrStage
-                      : STAGES[stageIndex]
+                      : STAGES[
+                          stageIndex
+                        ]
                     : done
                       ? "Added to your catalogue"
                       : "Drop any document here, or tap to choose"}
@@ -930,29 +2697,65 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
               <div className="h-1 w-40 overflow-hidden rounded-full bg-surface">
                 <motion.div
                   className="h-full bg-primary"
-                  initial={{ width: "0%" }}
-                  animate={{
-                    width: `${(((stageIndex === 0 && ocrStage ? ocrProgress : 1) + stageIndex) / STAGES.length) * 100}%`,
+                  initial={{
+                    width:
+                      "0%",
                   }}
-                  transition={{ duration: 0.3 }}
+                  animate={{
+                    width: `${
+                      ((
+                        (stageIndex ===
+                          0 &&
+                          ocrStage
+                          ? ocrProgress
+                          : 1) +
+                          stageIndex
+                      ) /
+                        STAGES.length) *
+                      100
+                    }%`,
+                  }}
+                  transition={{
+                    duration:
+                      0.3,
+                  }}
                 />
               </div>
             )}
 
             <p className="max-w-xs text-xs text-muted-foreground">
               {busy
-                ? stageIndex === 0 && ocrStage
+                ? stageIndex ===
+                      0 &&
+                    ocrStage
                   ? "Scanned or photographed pages take longer to read — hang tight."
-                  : fileSizeMB && fileSizeMB > 8
-                    ? `${fileLabel ?? "Document"} (${fileSizeMB.toFixed(1)} MB) — larger files take longer on slower connections, hang tight.`
-                    : `${fileLabel ?? "Document"} — this can take a moment, don't close the tab.`
+                  : fileSizeMB &&
+                      fileSizeMB >
+                        8
+                    ? `${
+                        fileLabel ??
+                        "Document"
+                      } (${fileSizeMB.toFixed(
+                        1,
+                      )} MB) — larger files take longer on slower connections, hang tight.`
+                    : `${
+                        fileLabel ??
+                        "Document"
+                      } — this can take a moment, don't close the tab.`
                 : done
                   ? catalogueOnly
                     ? `Saved for browsing and download. For study tools, upload a screenshot or a smaller selection of pages (up to ${STUDY_TOOL_PAGE_LIMIT}).`
                     : "Your study tools are being generated now — you'll see them fill in on the next page."
                   : "PDF, Word, PowerPoint, a photo of a page, or a zip of files — we'll do our best with anything you give it."}
             </p>
-            {error && <p className="mt-1 text-xs font-medium text-destructive">{error}</p>}
+
+            {error && (
+              <p className="mt-1 text-xs font-medium text-destructive">
+                {
+                  error
+                }
+              </p>
+            )}
           </label>
         </motion.div>
       )}
@@ -960,20 +2763,55 @@ export function DocumentUpload({ courseCode }: { courseCode?: string }) {
   );
 }
 
-function BundleThumb({ file, index }: { file: File; index: number }) {
-  const [url, setUrl] = useState<string | null>(null);
+function BundleThumb({
+  file,
+  index,
+}: {
+  file: File;
+  index: number;
+}) {
+  const [
+    url,
+    setUrl,
+  ] =
+    useState<
+      string | null
+    >(null);
 
   useEffect(() => {
-    const objectUrl = URL.createObjectURL(file);
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
+    const objectUrl =
+      URL.createObjectURL(
+        file,
+      );
+
+    setUrl(
+      objectUrl,
+    );
+
+    return () =>
+      URL.revokeObjectURL(
+        objectUrl,
+      );
   }, [file]);
 
   return (
     <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-surface-muted">
-      {url && <img src={url} alt={`Page ${index + 1}`} className="h-full w-full object-cover" />}
+      {url && (
+        <img
+          src={
+            url
+          }
+          alt={`Page ${
+            index + 1
+          }`}
+          className="h-full w-full object-cover"
+        />
+      )}
+
       <span className="absolute bottom-0 right-0 rounded-tl-md bg-background/80 px-1 text-[9px] font-semibold text-foreground">
-        {index + 1}
+        {
+          index + 1
+        }
       </span>
     </div>
   );
