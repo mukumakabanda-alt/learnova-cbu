@@ -1,709 +1,573 @@
-/**
- * Learnova — secure OpenRouter gateway.
- *
- * SERVER ONLY.
- *
- * This module is imported by Supabase Edge Functions.
- * It must never be imported from browser/React code.
- *
- * OpenRouter's `models` array is used for model-level fallback.
- * OpenRouter's own provider routing supplies provider-level failover.
- */
+// ============================================================================
+// LEARNOVA — OPENROUTER SHARED SERVER-SIDE CLIENT
+// ============================================================================
+//
+// Purpose:
+//   Securely call OpenRouter from Supabase Edge Functions.
+//
+// Design:
+//   - NEVER exposes OPENROUTER_API_KEY to the browser.
+//   - Uses the OpenRouter OpenAI-compatible Chat Completions endpoint.
+//   - Supports OpenRouter's model fallback array.
+//   - Supports structured JSON output where the selected model permits it.
+//   - Applies a hard request timeout.
+//   - Produces useful, bounded error messages for Edge Function logs.
+//   - Does not perform its own model retry loop because OpenRouter itself
+//     handles provider failover and the caller can decide whether another
+//     application-level retry is appropriate.
+//
+// OpenRouter supports automatic provider failover, and its `models` array
+// allows ordered model-level fallback when a selected model fails.
+// ============================================================================
 
-export type OpenRouterContentPart =
+const OPENROUTER_ENDPOINT =
+  "https://openrouter.ai/api/v1/chat/completions";
+
+// These are deliberately kept as a fallback chain rather than a single
+// model. The first model is the normal OpenRouter fallback; subsequent
+// entries are used if OpenRouter cannot complete the request with the
+// previous model.
+//
+// Current model IDs were verified against OpenRouter's current model pages
+// on 2026-09-18.
+//
+// The caller may override this list per request.
+export const DEFAULT_MODELS = [
+  "google/gemini-3.8-flash",
+  "anthropic/claude-sonnet-4.6",
+  "openai/gpt-5.4-mini",
+] as const;
+
+export type OpenRouterResponseFormat =
   | {
-      type: "text";
-      text: string;
+      type: "json_object";
     }
   | {
-      type: "image_url";
-      image_url: {
-        url: string;
-        detail?: "auto" | "low" | "high";
+      type: "json_schema";
+      json_schema: {
+        name: string;
+        strict?: boolean;
+        schema: Record<string, unknown>;
       };
     };
 
-export type OpenRouterMessage = {
-  role:
-    | "system"
-    | "user"
-    | "assistant";
-  content:
-    | string
-    | OpenRouterContentPart[];
-};
-
-export type OpenRouterRequestOptions = {
-  model?: string;
+export type OpenRouterTextOptions = {
+  /**
+   * Ordered model IDs.
+   *
+   * OpenRouter will try these in order when model-level fallback is needed.
+   */
   models?: string[];
-  messages: OpenRouterMessage[];
+
+  /**
+   * Sampling temperature.
+   *
+   * 0 is preferred for extraction, grading, classification and
+   * evidence-grounded educational generation.
+   */
   temperature?: number;
+
+  /**
+   * Maximum number of output tokens.
+   */
   maxTokens?: number;
-  responseFormat?: {
-    type: "json_object";
-  };
+
+  /**
+   * Hard request timeout.
+   */
   timeoutMs?: number;
+
+  /**
+   * Optional response-format constraint.
+   */
+  responseFormat?: OpenRouterResponseFormat;
+
+  /**
+   * Internal task name used only for diagnostics.
+   */
   task?: string;
-  siteUrl?: string;
-  siteName?: string;
+
+  /**
+   * Optional system instruction.
+   *
+   * The existing Learnova pipeline generally places the complete prompt
+   * into the user message, so this is optional.
+   */
+  systemPrompt?: string;
+
+  /**
+   * Optional OpenRouter provider preferences.
+   */
+  provider?: {
+    allow_fallbacks?: boolean;
+    data_collection?: "allow" | "deny";
+    zdr?: boolean;
+  };
 };
 
-export type OpenRouterResult = {
+export type OpenRouterTextResult = {
   content: string;
   model: string | null;
   provider: string | null;
-  usage: Record<
-    string,
-    unknown
-  > | null;
+  id: string | null;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 };
 
-export type OpenRouterErrorDetails = {
-  status: number | null;
-  body: string;
-  task?: string;
+type OpenRouterMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
 };
 
-export class OpenRouterError extends Error {
-  readonly details: OpenRouterErrorDetails;
+type OpenRouterRawResponse = {
+  id?: unknown;
+  model?: unknown;
+  provider?: unknown;
+  choices?: Array<{
+    message?: {
+      content?: unknown;
+    };
+  }>;
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+  };
+  error?: {
+    code?: unknown;
+    message?: unknown;
+    type?: unknown;
+    metadata?: unknown;
+  };
+};
 
-  constructor(
-    message: string,
-    details: OpenRouterErrorDetails,
-  ) {
-    super(message);
-    this.name =
-      "OpenRouterError";
-    this.details =
-      details;
+function cleanModels(models: string[] | undefined): string[] {
+  const source = models?.length
+    ? models
+    : [...DEFAULT_MODELS];
+
+  const unique = new Set<string>();
+
+  for (const model of source) {
+    const value = String(model ?? "").trim();
+
+    if (!value) continue;
+
+    // Avoid sending malformed entries such as accidental spaces or
+    // comma-separated values embedded in one item.
+    if (value.includes(",")) {
+      for (const part of value.split(",")) {
+        const cleaned = part.trim();
+
+        if (cleaned) {
+          unique.add(cleaned);
+        }
+      }
+      continue;
+    }
+
+    unique.add(value);
+  }
+
+  const result = [...unique];
+
+  if (!result.length) {
+    throw new Error("OpenRouter model list is empty.");
+  }
+
+  return result;
+}
+
+function boundedTemperature(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(2, parsed));
+}
+
+function boundedMaxTokens(value: unknown, fallback = 16_384): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(131_072, Math.floor(parsed)));
+}
+
+function boundedTimeout(value: unknown, fallback = 35_000): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(1_000, Math.min(120_000, Math.floor(parsed)));
+}
+
+function safeString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }
 
-export const DEFAULT_MODELS =
-  [
-    "google/gemini-3.8-flash",
-    "anthropic/claude-sonnet-5",
-  ] as const;
+function extractMessageContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
 
-const OPENROUTER_URL =
-  "https://openrouter.ai/api/v1/chat/completions";
+  if (Array.isArray(value)) {
+    const chunks: string[] = [];
 
-const DEFAULT_TIMEOUT_MS =
-  45_000;
+    for (const part of value) {
+      if (typeof part === "string") {
+        chunks.push(part);
+        continue;
+      }
 
-const TRANSIENT_STATUS_CODES =
-  new Set([
-    408,
-    409,
-    425,
-    429,
-    500,
-    502,
-    503,
-    504,
-  ]);
+      if (
+        part &&
+        typeof part === "object" &&
+        "text" in part &&
+        typeof (part as { text?: unknown }).text === "string"
+      ) {
+        chunks.push((part as { text: string }).text);
+      }
+    }
 
-function getApiKey():
-  | string
-  | null {
-  return (
-    Deno.env
-      .get(
-        "OPENROUTER_API_KEY",
-      )
-      ?.trim() ||
-    null
-  );
+    return chunks.join("");
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    "text" in value &&
+    typeof (value as { text?: unknown }).text === "string"
+  ) {
+    return (value as { text: string }).text;
+  }
+
+  return safeString(value);
 }
 
-export function isOpenRouterConfigured():
-  boolean {
-  return Boolean(
-    getApiKey(),
-  );
+function truncateForError(value: string, maxChars = 2_000): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+
+  return `${cleaned.slice(0, maxChars)}…`;
 }
 
-function normalizeModels(
-  model?: string,
-  models?: string[],
-): string[] {
-  const values = [
-    ...(models ??
-      []),
-    ...(model
-      ? [model]
-      : []),
-    ...DEFAULT_MODELS,
-  ]
-    .map(
-      (
-        value,
-      ) =>
-        value?.trim(),
-    )
-    .filter(
-      Boolean,
+async function readResponseBody(response: Response): Promise<OpenRouterRawResponse> {
+  const rawText = await response.text();
+
+  if (!rawText) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawText) as OpenRouterRawResponse;
+  } catch {
+    throw new Error(
+      `OpenRouter returned a non-JSON response (${response.status}): ${truncateForError(rawText)}`,
     );
-
-  return [
-    ...new Set(
-      values,
-    ),
-  ].slice(
-    0,
-    5,
-  );
+  }
 }
 
-function timeoutFor(
-  value:
-    | number
-    | undefined,
-): number {
-  if (
-    !Number.isFinite(
-      value,
-    )
-  ) {
-    return DEFAULT_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    5_000,
-    Math.min(
-      60_000,
-      Math.floor(
-        value!,
-      ),
-    ),
-  );
-}
-
-function responseText(
-  payload: any,
-): string {
-  const content =
-    payload
-      ?.choices?.[0]
-      ?.message
-      ?.content;
-
-  if (
-    typeof content ===
-    "string"
-  ) {
-    return content.trim();
-  }
-
-  if (
-    Array.isArray(
-      content,
-    )
-  ) {
-    return content
-      .map(
-        (
-          part: any,
-        ) => {
-          if (
-            typeof part ===
-            "string"
-          ) {
-            return part;
-          }
-
-          return typeof part
-            ?.text ===
-            "string"
-            ? part.text
-            : "";
-        },
-      )
-      .filter(
-        Boolean,
-      )
-      .join("\n")
-      .trim();
-  }
-
-  return "";
-}
-
-async function requestModel(
-  apiKey: string,
-  models: string[],
-  options: OpenRouterRequestOptions,
-): Promise<OpenRouterResult> {
-  const timeout =
-    timeoutFor(
-      options.timeoutMs,
-    );
-
-  const headers: Record<
-    string,
-    string
-  > = {
-    Authorization:
-      `Bearer ${apiKey}`,
-    "Content-Type":
-      "application/json",
+function buildHeaders(): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${Deno.env.get("OPENROUTER_API_KEY") ?? ""}`,
+    "Content-Type": "application/json",
   };
 
+  // Optional attribution headers.
+  //
+  // They are not required for the request to function, but allowing them
+  // through environment variables avoids hardcoding deployment-specific
+  // URLs into this shared utility.
   const siteUrl =
-    options.siteUrl?.trim() ||
-    Deno.env
-      .get(
-        "LEARNOVA_SITE_URL",
-      )
-      ?.trim();
+    Deno.env.get("OPENROUTER_SITE_URL")?.trim() ?? "";
 
-  const siteName =
-    options.siteName?.trim() ||
-    Deno.env
-      .get(
-        "LEARNOVA_SITE_NAME",
-      )
-      ?.trim() ||
+  const appName =
+    Deno.env.get("OPENROUTER_APP_NAME")?.trim() ??
     "Learnova";
 
   if (siteUrl) {
-    headers[
-      "HTTP-Referer"
-    ] = siteUrl;
+    headers["HTTP-Referer"] = siteUrl;
   }
 
-  headers[
-    "X-Title"
-  ] = siteName;
+  if (appName) {
+    headers["X-Title"] = appName;
+  }
 
-  /*
-   * OpenRouter documents `models` as the fallback array.
-   *
-   * Do not send a separate browser-visible API key.
-   */
-  const body: Record<
-    string,
-    unknown
-  > = {
+  return headers;
+}
+
+function validateApiKey(): string {
+  const apiKey =
+    Deno.env.get("OPENROUTER_API_KEY")?.trim() ?? "";
+
+  if (!apiKey) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not configured in Supabase Edge Function secrets.",
+    );
+  }
+
+  return apiKey;
+}
+
+function isLikelyTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const name = error.name.toLowerCase();
+  const message = error.message.toLowerCase();
+
+  return (
+    name.includes("abort") ||
+    message.includes("abort") ||
+    message.includes("timeout") ||
+    message.includes("timed out")
+  );
+}
+
+function normalizeUsage(
+  usage: OpenRouterRawResponse["usage"],
+): OpenRouterTextResult["usage"] {
+  if (!usage) {
+    return undefined;
+  }
+
+  const promptTokens =
+    Number.isFinite(Number(usage.prompt_tokens))
+      ? Number(usage.prompt_tokens)
+      : undefined;
+
+  const completionTokens =
+    Number.isFinite(Number(usage.completion_tokens))
+      ? Number(usage.completion_tokens)
+      : undefined;
+
+  const totalTokens =
+    Number.isFinite(Number(usage.total_tokens))
+      ? Number(usage.total_tokens)
+      : undefined;
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
+}
+
+/**
+ * Returns true when an OpenRouter key exists in the Edge Function environment.
+ */
+export function isOpenRouterConfigured(): boolean {
+  return Boolean(
+    Deno.env.get("OPENROUTER_API_KEY")?.trim(),
+  );
+}
+
+/**
+ * Make one non-streaming OpenRouter text-generation request.
+ *
+ * The `models` array is sent directly to OpenRouter. OpenRouter handles
+ * model-level fallback and provider-level failover; this helper therefore
+ * does not loop across models itself.
+ */
+export async function callOpenRouterText(
+  prompt: string,
+  options: OpenRouterTextOptions = {},
+): Promise<OpenRouterTextResult> {
+  const apiKey = validateApiKey();
+
+  const cleanPrompt = String(prompt ?? "").trim();
+
+  if (!cleanPrompt) {
+    throw new Error("OpenRouter prompt cannot be empty.");
+  }
+
+  const models = cleanModels(options.models);
+
+  const temperature = boundedTemperature(
+    options.temperature,
+    0,
+  );
+
+  const maxTokens = boundedMaxTokens(
+    options.maxTokens,
+    16_384,
+  );
+
+  const timeoutMs = boundedTimeout(
+    options.timeoutMs,
+    35_000,
+  );
+
+  const messages: OpenRouterMessage[] = [];
+
+  if (options.systemPrompt?.trim()) {
+    messages.push({
+      role: "system",
+      content: options.systemPrompt.trim(),
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: cleanPrompt,
+  });
+
+  const body: Record<string, unknown> = {
     models,
-    messages:
-      options.messages,
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+    stream: false,
   };
 
-  if (
-    typeof options.temperature ===
-      "number" &&
-    Number.isFinite(
-      options.temperature,
-    )
-  ) {
-    body.temperature =
-      Math.max(
-        0,
-        Math.min(
-          2,
-          options.temperature,
-        ),
-      );
+  if (options.responseFormat) {
+    body.response_format = options.responseFormat;
   }
 
-  if (
-    typeof options.maxTokens ===
-      "number" &&
-    Number.isFinite(
-      options.maxTokens,
-    ) &&
-    options.maxTokens >
-      0
-  ) {
-    body.max_tokens =
-      Math.min(
-        65_536,
-        Math.floor(
-          options.maxTokens,
-        ),
-      );
+  if (options.provider) {
+    body.provider = options.provider;
   }
 
-  if (
-    options.responseFormat
-  ) {
-    body.response_format =
-      options.responseFormat;
-  }
+  const controller = new AbortController();
 
-  const controller =
-    new AbortController();
-
-  const timer =
-    setTimeout(
-      () =>
-        controller.abort(),
-      timeout,
+  const timer = setTimeout(() => {
+    controller.abort(
+      new Error(
+        `OpenRouter request timed out after ${timeoutMs}ms.`,
+      ),
     );
+  }, timeoutMs);
+
+  const startedAt = Date.now();
+  const taskLabel =
+    options.task?.trim() || "Learnova OpenRouter request";
 
   try {
-    const response =
-      await fetch(
-        OPENROUTER_URL,
-        {
-          method:
-            "POST",
-          headers,
-          body:
-            JSON.stringify(
-              body,
-            ),
-          signal:
-            controller.signal,
-        },
-      );
+    const response = await fetch(
+      OPENROUTER_ENDPOINT,
+      {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
+    );
 
-    const raw =
-      await response.text();
+    const payload = await readResponseBody(response);
 
-    if (
-      !response.ok
-    ) {
-      throw new OpenRouterError(
-        `OpenRouter returned HTTP ${response.status}.`,
-        {
-          status:
-            response.status,
-          body:
-            raw.slice(
-              0,
-              2_000,
-            ),
-          task:
-            options.task,
-        },
-      );
-    }
+    if (!response.ok) {
+      const errorCode =
+        safeString(payload.error?.code).trim();
 
-    let payload:
-      any;
+      const errorMessage =
+        safeString(payload.error?.message).trim();
 
-    try {
-      payload =
-        JSON.parse(
-          raw,
-        );
-    } catch {
-      throw new OpenRouterError(
-        "OpenRouter returned invalid JSON.",
-        {
-          status:
-            response.status,
-          body:
-            raw.slice(
-              0,
-              2_000,
-            ),
-          task:
-            options.task,
-        },
+      const details = [
+        `HTTP ${response.status}`,
+        errorCode ? `code=${errorCode}` : "",
+        errorMessage
+          ? `message=${truncateForError(errorMessage)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      throw new Error(
+        `OpenRouter request failed during ${taskLabel}: ${details || "unknown API error"}`,
       );
     }
 
     const content =
-      responseText(
-        payload,
-      );
+      extractMessageContent(
+        payload.choices?.[0]?.message?.content,
+      ).trim();
 
     if (!content) {
-      throw new OpenRouterError(
-        "OpenRouter returned an empty response.",
-        {
-          status:
-            response.status,
-          body:
-            raw.slice(
-              0,
-              2_000,
-            ),
-          task:
-            options.task,
-        },
+      const elapsed = Date.now() - startedAt;
+
+      throw new Error(
+        `OpenRouter returned an empty response during ${taskLabel} after ${elapsed}ms.`,
       );
     }
+
+    const model =
+      typeof payload.model === "string"
+        ? payload.model
+        : null;
+
+    const provider =
+      typeof payload.provider === "string"
+        ? payload.provider
+        : null;
+
+    const id =
+      typeof payload.id === "string"
+        ? payload.id
+        : null;
 
     return {
       content,
-      model:
-        typeof payload
-          ?.model ===
-        "string"
-          ? payload.model
-          : null,
-      provider:
-        typeof payload
-          ?.provider ===
-        "string"
-          ? payload.provider
-          : null,
-      usage:
-        payload
-          ?.usage &&
-        typeof payload.usage ===
-          "object"
-          ? payload.usage
-          : null,
+      model,
+      provider,
+      id,
+      usage: normalizeUsage(payload.usage),
     };
-  } catch (
-    error
-  ) {
-    if (
-      error instanceof
-      OpenRouterError
-    ) {
+  } catch (error) {
+    if (isLikelyTimeoutError(error)) {
+      throw new Error(
+        `OpenRouter request timed out during ${taskLabel} after ${timeoutMs}ms.`,
+      );
+    }
+
+    if (error instanceof Error) {
       throw error;
     }
 
-    const aborted =
-      error instanceof
-        DOMException &&
-      error.name ===
-        "AbortError";
-
-    throw new OpenRouterError(
-      aborted
-        ? `OpenRouter request timed out after ${Math.ceil(
-            timeout / 1_000,
-          )} seconds.`
-        : `OpenRouter network request failed: ${
-            error instanceof
-            Error
-              ? error.message
-              : String(
-                  error,
-                )
-          }`,
-      {
-        status:
-          null,
-        body:
-          "",
-        task:
-          options.task,
-      },
+    throw new Error(
+      `OpenRouter request failed during ${taskLabel}: ${String(error)}`,
     );
   } finally {
-    clearTimeout(
-      timer,
-    );
+    clearTimeout(timer);
   }
 }
 
-export async function callOpenRouter(
-  options: OpenRouterRequestOptions,
-): Promise<OpenRouterResult> {
-  const key =
-    getApiKey();
-
-  if (!key) {
-    throw new OpenRouterError(
-      "OPENROUTER_API_KEY is not configured.",
-      {
-        status:
-          null,
-        body:
-          "",
-        task:
-          options.task,
-      },
-    );
-  }
-
-  const models =
-    normalizeModels(
-      options.model,
-      options.models,
-    );
-
-  if (
-    models.length ===
-    0
-  ) {
-    throw new OpenRouterError(
-      "No OpenRouter models were configured.",
-      {
-        status:
-          null,
-        body:
-          "",
-        task:
-          options.task,
-      },
-    );
-  }
-
-  let lastError:
-    | unknown
-    | null = null;
-
-  /*
-   * First request: let OpenRouter itself perform model + provider
-   * fallback using its `models` array.
-   */
-  try {
-    return await requestModel(
-      key,
-      models,
-      options,
-    );
-  } catch (
-    firstError
-  ) {
-    lastError =
-      firstError;
-
-    /*
-     * Only retry the whole routed request once for transient conditions.
-     *
-     * This protects against a transient network interruption without
-     * multiplying requests during a permanent client-side 4xx error.
-     */
-    const status =
-      firstError instanceof
-      OpenRouterError
-        ? firstError
-            .details
-            .status
-        : null;
-
-    const retryable =
-      status === null ||
-      TRANSIENT_STATUS_CODES.has(
-        status,
-      );
-
-    if (
-      !retryable
-    ) {
-      throw firstError;
-    }
-  }
-
-  await new Promise(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        500,
-      ),
+/**
+ * Convenience wrapper for callers that want plain text only.
+ */
+export async function generateOpenRouterText(
+  prompt: string,
+  options: OpenRouterTextOptions = {},
+): Promise<string> {
+  const result = await callOpenRouterText(
+    prompt,
+    options,
   );
 
-  try {
-    return await requestModel(
-      key,
-      models,
-      options,
-    );
-  } catch (
-    retryError
-  ) {
-    lastError =
-      retryError;
+  return result.content;
   }
-
-  if (
-    lastError instanceof
-    OpenRouterError
-  ) {
-    throw lastError;
-  }
-
-  throw new OpenRouterError(
-    "OpenRouter failed after retry.",
-    {
-      status:
-        null,
-      body:
-        "",
-      task:
-        options.task,
-    },
-  );
-}
-
-export async function callOpenRouterText(
-  prompt: string,
-  options: Omit<
-    OpenRouterRequestOptions,
-    "messages"
-  > = {},
-): Promise<OpenRouterResult> {
-  return callOpenRouter({
-    ...options,
-    messages: [
-      {
-        role:
-          "user",
-        content:
-          prompt,
-      },
-    ],
-  });
-}
-
-export async function callOpenRouterVision(
-  prompt: string,
-  imageUrl: string,
-  options: Omit<
-    OpenRouterRequestOptions,
-    "messages"
-  > = {},
-): Promise<OpenRouterResult> {
-  const url =
-    imageUrl?.trim();
-
-  if (!url) {
-    throw new OpenRouterError(
-      "A vision request requires an image URL or data URL.",
-      {
-        status:
-          null,
-        body:
-          "",
-        task:
-          options.task,
-      },
-    );
-  }
-
-  return callOpenRouter({
-    ...options,
-    messages: [
-      {
-        role:
-          "user",
-        content: [
-          {
-            type:
-              "text",
-            text:
-              prompt,
-          },
-          {
-            type:
-              "image_url",
-            image_url: {
-              url,
-              detail:
-                "high",
-            },
-          },
-        ],
-      },
-    ],
-  });
-}
-
-export function getOpenRouterStatus() {
-  return {
-    configured:
-      isOpenRouterConfigured(),
-    models:
-      DEFAULT_MODELS,
-  };
-    }
