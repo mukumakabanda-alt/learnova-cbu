@@ -1,11 +1,18 @@
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | {
+      [key: string]: Json | undefined;
+    }
+  | Json[];
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.5";
   };
+
   public: {
     Tables: {
       courses: {
@@ -20,6 +27,7 @@ export type Database = {
           updated_at: string;
           year: number;
         };
+
         Insert: {
           code: string;
           created_at?: string;
@@ -31,6 +39,7 @@ export type Database = {
           updated_at?: string;
           year?: number;
         };
+
         Update: {
           code?: string;
           created_at?: string;
@@ -42,16 +51,24 @@ export type Database = {
           updated_at?: string;
           year?: number;
         };
+
         Relationships: [
           {
-            foreignKeyName: "courses_programme_code_fkey";
-            columns: ["programme_code"];
+            foreignKeyName:
+              "courses_programme_code_fkey";
+            columns: [
+              "programme_code",
+            ];
             isOneToOne: false;
-            referencedRelation: "programmes";
-            referencedColumns: ["code"];
+            referencedRelation:
+              "programmes";
+            referencedColumns: [
+              "code",
+            ];
           },
         ];
       };
+
       flashcards: {
         Row: {
           answer: string;
@@ -64,6 +81,7 @@ export type Database = {
           quality_flags: string[];
           quality_score: number | null;
         };
+
         Insert: {
           answer: string;
           created_at?: string;
@@ -75,6 +93,7 @@ export type Database = {
           quality_flags?: string[];
           quality_score?: number | null;
         };
+
         Update: {
           answer?: string;
           created_at?: string;
@@ -86,16 +105,24 @@ export type Database = {
           quality_flags?: string[];
           quality_score?: number | null;
         };
+
         Relationships: [
           {
-            foreignKeyName: "flashcards_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "flashcards_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       hero_slides: {
         Row: {
           created_at: string;
@@ -104,6 +131,7 @@ export type Database = {
           position: number;
           updated_at: string;
         };
+
         Insert: {
           created_at?: string;
           id?: string;
@@ -111,6 +139,7 @@ export type Database = {
           position?: number;
           updated_at?: string;
         };
+
         Update: {
           created_at?: string;
           id?: string;
@@ -118,41 +147,59 @@ export type Database = {
           position?: number;
           updated_at?: string;
         };
+
         Relationships: [];
       };
+
       material_likes: {
         Row: {
           created_at: string;
           material_id: string;
           profile_id: string;
         };
+
         Insert: {
           created_at?: string;
           material_id: string;
           profile_id: string;
         };
+
         Update: {
           created_at?: string;
           material_id?: string;
           profile_id?: string;
         };
+
         Relationships: [
           {
-            foreignKeyName: "material_likes_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "material_likes_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
           {
-            foreignKeyName: "material_likes_profile_id_fkey";
-            columns: ["profile_id"];
+            foreignKeyName:
+              "material_likes_profile_id_fkey";
+            columns: [
+              "profile_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "profiles";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       material_requests: {
         Row: {
           course_code: string | null;
@@ -160,251 +207,468 @@ export type Database = {
           id: string;
           notes: string | null;
           requested_by: string;
-          status: Database["public"]["Enums"]["request_status"];
+          status:
+            Database["public"]["Enums"]["request_status"];
           title: string;
           updated_at: string;
         };
+
         Insert: {
           course_code?: string | null;
           created_at?: string;
           id?: string;
           notes?: string | null;
           requested_by: string;
-          status?: Database["public"]["Enums"]["request_status"];
+          status?:
+            Database["public"]["Enums"]["request_status"];
           title: string;
           updated_at?: string;
         };
+
         Update: {
           course_code?: string | null;
           created_at?: string;
           id?: string;
           notes?: string | null;
           requested_by?: string;
-          status?: Database["public"]["Enums"]["request_status"];
+          status?:
+            Database["public"]["Enums"]["request_status"];
           title?: string;
           updated_at?: string;
         };
+
         Relationships: [
           {
-            foreignKeyName: "material_requests_course_code_fkey";
-            columns: ["course_code"];
+            foreignKeyName:
+              "material_requests_course_code_fkey";
+            columns: [
+              "course_code",
+            ];
             isOneToOne: false;
-            referencedRelation: "courses";
-            referencedColumns: ["code"];
+            referencedRelation:
+              "courses";
+            referencedColumns: [
+              "code",
+            ];
           },
         ];
       };
+
       materials: {
         Row: {
-          content_confidence: number | null;
-          content_confidence_note: string | null;
-          content_year: number | null;
-          course_code: string | null;
+          content_confidence:
+            | number
+            | null;
+          content_confidence_note:
+            | string
+            | null;
+          content_year:
+            | number
+            | null;
+          course_code:
+            | string
+            | null;
           created_at: string;
-          current_study_pack_id: string | null;
-          document_model: Json | null;
+          current_study_pack_id:
+            | string
+            | null;
+          document_model:
+            | Json
+            | null;
+          detected_type:
+            | string
+            | null;
+          detected_type_confidence:
+            | number
+            | null;
+          type_disagreement: boolean;
           download_count: number;
           extra_file_paths: string[];
-          extraction_confidence: number | null;
-          extraction_metadata: Json | null;
-          file_path: string | null;
-          flashcards_error: string | null;
+          extraction_confidence:
+            | number
+            | null;
+          extraction_metadata:
+            | Json
+            | null;
+          file_path:
+            | string
+            | null;
+          flashcards_error:
+            | string
+            | null;
           flashcards_status: string;
           generation_quality: Json;
-          generation_source: string | null;
+          generation_source:
+            | string
+            | null;
           id: string;
           likes_count: number;
-          pages: number | null;
-          processing_error: string | null;
-          quiz_error: string | null;
+          pages:
+            | number
+            | null;
+          processing_error:
+            | string
+            | null;
+          quiz_error:
+            | string
+            | null;
           quiz_status: string;
           source: string;
-          status: Database["public"]["Enums"]["material_status"];
-          study_kit: Json | null;
-          study_pack_confidence: number | null;
-          summary: string | null;
-          summary_error: string | null;
+          status:
+            Database["public"]["Enums"]["material_status"];
+          study_kit:
+            | Json
+            | null;
+          study_pack_confidence:
+            | number
+            | null;
+          summary:
+            | string
+            | null;
+          summary_error:
+            | string
+            | null;
           summary_status: string;
           tags: string[];
           title: string;
           type: string;
           updated_at: string;
-          uploaded_by: string | null;
+          uploaded_by:
+            | string
+            | null;
         };
+
         Insert: {
-          content_confidence?: number | null;
-          content_confidence_note?: string | null;
-          content_year?: number | null;
-          course_code?: string | null;
+          content_confidence?:
+            | number
+            | null;
+          content_confidence_note?:
+            | string
+            | null;
+          content_year?:
+            | number
+            | null;
+          course_code?:
+            | string
+            | null;
           created_at?: string;
-          current_study_pack_id?: string | null;
-          document_model?: Json | null;
+          current_study_pack_id?:
+            | string
+            | null;
+          document_model?:
+            | Json
+            | null;
+          detected_type?:
+            | string
+            | null;
+          detected_type_confidence?:
+            | number
+            | null;
+          type_disagreement?: boolean;
           download_count?: number;
           extra_file_paths?: string[];
-          extraction_confidence?: number | null;
-          extraction_metadata?: Json | null;
-          file_path?: string | null;
-          flashcards_error?: string | null;
+          extraction_confidence?:
+            | number
+            | null;
+          extraction_metadata?:
+            | Json
+            | null;
+          file_path?:
+            | string
+            | null;
+          flashcards_error?:
+            | string
+            | null;
           flashcards_status?: string;
-          generation_source?: string | null;
+          generation_source?:
+            | string
+            | null;
           id?: string;
           likes_count?: number;
-          pages?: number | null;
-          processing_error?: string | null;
-          quiz_error?: string | null;
+          pages?:
+            | number
+            | null;
+          processing_error?:
+            | string
+            | null;
+          quiz_error?:
+            | string
+            | null;
           quiz_status?: string;
           source?: string;
-          status?: Database["public"]["Enums"]["material_status"];
-          study_kit?: Json | null;
-          study_pack_confidence?: number | null;
-          summary?: string | null;
-          summary_error?: string | null;
+          status?:
+            Database["public"]["Enums"]["material_status"];
+          study_kit?:
+            | Json
+            | null;
+          study_pack_confidence?:
+            | number
+            | null;
+          summary?:
+            | string
+            | null;
+          summary_error?:
+            | string
+            | null;
           summary_status?: string;
           tags?: string[];
           title: string;
           type?: string;
           updated_at?: string;
-          uploaded_by?: string | null;
+          uploaded_by?:
+            | string
+            | null;
         };
+
         Update: {
-          content_confidence?: number | null;
-          content_confidence_note?: string | null;
-          content_year?: number | null;
-          course_code?: string | null;
+          content_confidence?:
+            | number
+            | null;
+          content_confidence_note?:
+            | string
+            | null;
+          content_year?:
+            | number
+            | null;
+          course_code?:
+            | string
+            | null;
           created_at?: string;
-          current_study_pack_id?: string | null;
-          document_model?: Json | null;
+          current_study_pack_id?:
+            | string
+            | null;
+          document_model?:
+            | Json
+            | null;
+          detected_type?:
+            | string
+            | null;
+          detected_type_confidence?:
+            | number
+            | null;
+          type_disagreement?: boolean;
           download_count?: number;
           extra_file_paths?: string[];
-          extraction_confidence?: number | null;
-          extraction_metadata?: Json | null;
-          file_path?: string | null;
-          flashcards_error?: string | null;
+          extraction_confidence?:
+            | number
+            | null;
+          extraction_metadata?:
+            | Json
+            | null;
+          file_path?:
+            | string
+            | null;
+          flashcards_error?:
+            | string
+            | null;
           flashcards_status?: string;
-          generation_source?: string | null;
+          generation_source?:
+            | string
+            | null;
           id?: string;
           likes_count?: number;
-          pages?: number | null;
-          processing_error?: string | null;
-          quiz_error?: string | null;
+          pages?:
+            | number
+            | null;
+          processing_error?:
+            | string
+            | null;
+          quiz_error?:
+            | string
+            | null;
           quiz_status?: string;
           source?: string;
-          status?: Database["public"]["Enums"]["material_status"];
-          study_kit?: Json | null;
-          study_pack_confidence?: number | null;
-          summary?: string | null;
-          summary_error?: string | null;
+          status?:
+            Database["public"]["Enums"]["material_status"];
+          study_kit?:
+            | Json
+            | null;
+          study_pack_confidence?:
+            | number
+            | null;
+          summary?:
+            | string
+            | null;
+          summary_error?:
+            | string
+            | null;
           summary_status?: string;
           tags?: string[];
           title?: string;
           type?: string;
           updated_at?: string;
-          uploaded_by?: string | null;
+          uploaded_by?:
+            | string
+            | null;
         };
+
         Relationships: [
           {
-            foreignKeyName: "materials_course_code_fkey";
-            columns: ["course_code"];
+            foreignKeyName:
+              "materials_course_code_fkey";
+            columns: [
+              "course_code",
+            ];
             isOneToOne: false;
-            referencedRelation: "courses";
-            referencedColumns: ["code"];
+            referencedRelation:
+              "courses";
+            referencedColumns: [
+              "code",
+            ];
           },
           {
-            foreignKeyName: "materials_current_study_pack_id_fkey";
-            columns: ["current_study_pack_id"];
+            foreignKeyName:
+              "materials_current_study_pack_id_fkey";
+            columns: [
+              "current_study_pack_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "study_pack_versions";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "study_pack_versions";
+            referencedColumns: [
+              "id",
+            ];
           },
           {
-            foreignKeyName: "materials_uploaded_by_profile_fkey";
-            columns: ["uploaded_by"];
+            foreignKeyName:
+              "materials_uploaded_by_profile_fkey";
+            columns: [
+              "uploaded_by",
+            ];
             isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "profiles";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       pipeline_invocations: {
         Row: {
           created_at: string;
           id: string;
-          material_id: string | null;
+          material_id:
+            | string
+            | null;
           user_id: string;
         };
+
         Insert: {
           created_at?: string;
           id?: string;
-          material_id?: string | null;
+          material_id?:
+            | string
+            | null;
           user_id: string;
         };
+
         Update: {
           created_at?: string;
           id?: string;
-          material_id?: string | null;
+          material_id?:
+            | string
+            | null;
           user_id?: string;
         };
+
         Relationships: [
           {
-            foreignKeyName: "pipeline_invocations_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "pipeline_invocations_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       profiles: {
         Row: {
-          avatar_url: string | null;
+          avatar_url:
+            | string
+            | null;
           created_at: string;
           current_streak: number;
           full_name: string;
           id: string;
-          last_studied_on: string | null;
+          last_studied_on:
+            | string
+            | null;
           longest_streak: number;
-          phone: string | null;
+          phone:
+            | string
+            | null;
           programme_code: string;
           school: string;
-          student_number: string | null;
+          student_number:
+            | string
+            | null;
           updated_at: string;
           weekly_progress: number;
           year: number;
         };
+
         Insert: {
-          avatar_url?: string | null;
+          avatar_url?:
+            | string
+            | null;
           created_at?: string;
           current_streak?: number;
           full_name?: string;
           id: string;
-          last_studied_on?: string | null;
+          last_studied_on?:
+            | string
+            | null;
           longest_streak?: number;
-          phone?: string | null;
+          phone?:
+            | string
+            | null;
           programme_code?: string;
           school?: string;
-          student_number?: string | null;
+          student_number?:
+            | string
+            | null;
           updated_at?: string;
           weekly_progress?: number;
           year?: number;
         };
+
         Update: {
-          avatar_url?: string | null;
+          avatar_url?:
+            | string
+            | null;
           created_at?: string;
           current_streak?: number;
           full_name?: string;
           id?: string;
-          last_studied_on?: string | null;
+          last_studied_on?:
+            | string
+            | null;
           longest_streak?: number;
-          phone?: string | null;
+          phone?:
+            | string
+            | null;
           programme_code?: string;
           school?: string;
-          student_number?: string | null;
+          student_number?:
+            | string
+            | null;
           updated_at?: string;
           weekly_progress?: number;
           year?: number;
         };
+
         Relationships: [];
       };
+
       programmes: {
         Row: {
           code: string;
@@ -415,6 +679,7 @@ export type Database = {
           school: string;
           updated_at: string;
         };
+
         Insert: {
           code: string;
           created_at?: string;
@@ -424,6 +689,7 @@ export type Database = {
           school: string;
           updated_at?: string;
         };
+
         Update: {
           code?: string;
           created_at?: string;
@@ -433,75 +699,112 @@ export type Database = {
           school?: string;
           updated_at?: string;
         };
+
         Relationships: [];
       };
+
       quiz_questions: {
         Row: {
           correct_index: number;
           created_at: string;
+          evidence: Json;
           explanation: string;
           id: string;
           material_id: string;
           options: string[];
           position: number;
           question: string;
+          quality_flags: string[];
+          quality_score:
+            | number
+            | null;
         };
+
         Insert: {
           correct_index?: number;
           created_at?: string;
+          evidence?: Json;
           explanation?: string;
           id?: string;
           material_id: string;
           options?: string[];
           position?: number;
           question: string;
+          quality_flags?: string[];
+          quality_score?:
+            | number
+            | null;
         };
+
         Update: {
           correct_index?: number;
           created_at?: string;
+          evidence?: Json;
           explanation?: string;
           id?: string;
           material_id?: string;
           options?: string[];
           position?: number;
           question?: string;
+          quality_flags?: string[];
+          quality_score?:
+            | number
+            | null;
         };
+
         Relationships: [
           {
-            foreignKeyName: "quiz_questions_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "quiz_questions_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       saved_materials: {
         Row: {
           created_at: string;
           material_id: string;
           profile_id: string;
         };
+
         Insert: {
           created_at?: string;
           material_id: string;
           profile_id: string;
         };
+
         Update: {
           created_at?: string;
           material_id?: string;
           profile_id?: string;
         };
+
         Relationships: [
           {
-            foreignKeyName: "saved_materials_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "saved_materials_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       site_settings: {
         Row: {
           created_at: string;
@@ -511,6 +814,7 @@ export type Database = {
           id: boolean;
           updated_at: string;
         };
+
         Insert: {
           created_at?: string;
           featured_course_codes?: string[];
@@ -519,6 +823,7 @@ export type Database = {
           id?: boolean;
           updated_at?: string;
         };
+
         Update: {
           created_at?: string;
           featured_course_codes?: string[];
@@ -527,248 +832,465 @@ export type Database = {
           id?: boolean;
           updated_at?: string;
         };
+
         Relationships: [];
       };
+
       study_pack_versions: {
         Row: {
           created_at: string;
-          document_model: Json | null;
+          document_model:
+            | Json
+            | null;
           document_type: string;
-          extraction_confidence: number | null;
+          extraction_confidence:
+            | number
+            | null;
           flashcards: Json;
-          generated_by: string | null;
+          generated_by:
+            | string
+            | null;
           generation_source: string;
-          grounding_confidence: number | null;
+          grounding_confidence:
+            | number
+            | null;
           id: string;
           is_current: boolean;
           material_id: string;
           quiz: Json;
-          study_kit: Json | null;
-          summary: string | null;
+          study_kit:
+            | Json
+            | null;
+          summary:
+            | string
+            | null;
           tags: string[];
           version: number;
         };
+
         Insert: {
           created_at?: string;
-          document_model?: Json | null;
+          document_model?:
+            | Json
+            | null;
           document_type: string;
-          extraction_confidence?: number | null;
+          extraction_confidence?:
+            | number
+            | null;
           flashcards?: Json;
-          generated_by?: string | null;
+          generated_by?:
+            | string
+            | null;
           generation_source?: string;
-          grounding_confidence?: number | null;
+          grounding_confidence?:
+            | number
+            | null;
           id?: string;
           is_current?: boolean;
           material_id: string;
           quiz?: Json;
-          study_kit?: Json | null;
-          summary?: string | null;
+          study_kit?:
+            | Json
+            | null;
+          summary?:
+            | string
+            | null;
           tags?: string[];
           version: number;
         };
+
         Update: {
           created_at?: string;
-          document_model?: Json | null;
+          document_model?:
+            | Json
+            | null;
           document_type?: string;
-          extraction_confidence?: number | null;
+          extraction_confidence?:
+            | number
+            | null;
           flashcards?: Json;
-          generated_by?: string | null;
+          generated_by?:
+            | string
+            | null;
           generation_source?: string;
-          grounding_confidence?: number | null;
+          grounding_confidence?:
+            | number
+            | null;
           id?: string;
           is_current?: boolean;
           material_id?: string;
           quiz?: Json;
-          study_kit?: Json | null;
-          summary?: string | null;
+          study_kit?:
+            | Json
+            | null;
+          summary?:
+            | string
+            | null;
           tags?: string[];
           version?: number;
         };
+
         Relationships: [
           {
-            foreignKeyName: "study_pack_versions_material_id_fkey";
-            columns: ["material_id"];
+            foreignKeyName:
+              "study_pack_versions_material_id_fkey";
+            columns: [
+              "material_id",
+            ];
             isOneToOne: false;
-            referencedRelation: "materials";
-            referencedColumns: ["id"];
+            referencedRelation:
+              "materials";
+            referencedColumns: [
+              "id",
+            ];
           },
         ];
       };
+
       user_roles: {
         Row: {
           created_at: string;
           id: string;
-          role: Database["public"]["Enums"]["app_role"];
+          role:
+            Database["public"]["Enums"]["app_role"];
           user_id: string;
         };
+
         Insert: {
           created_at?: string;
           id?: string;
-          role?: Database["public"]["Enums"]["app_role"];
+          role?:
+            Database["public"]["Enums"]["app_role"];
           user_id: string;
         };
+
         Update: {
           created_at?: string;
           id?: string;
-          role?: Database["public"]["Enums"]["app_role"];
+          role?:
+            Database["public"]["Enums"]["app_role"];
           user_id?: string;
         };
+
         Relationships: [];
       };
     };
+
     Views: {
       [_ in never]: never;
     };
+
     Functions: {
-      bump_streak: { Args: { p_profile_id: string }; Returns: undefined };
-      claim_initial_admin: { Args: never; Returns: boolean };
-      demote_admin_role: { Args: { p_user_id: string }; Returns: undefined };
+      bump_streak: {
+        Args: {
+          p_profile_id: string;
+        };
+        Returns: undefined;
+      };
+
+      claim_initial_admin: {
+        Args: never;
+        Returns: boolean;
+      };
+
+      demote_admin_role: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: undefined;
+      };
+
       has_role: {
         Args: {
-          _role: Database["public"]["Enums"]["app_role"];
+          _role:
+            Database["public"]["Enums"]["app_role"];
           _user_id: string;
         };
         Returns: boolean;
       };
+
       increment_download_count: {
-        Args: { p_material_id: string };
+        Args: {
+          p_material_id: string;
+        };
         Returns: undefined;
       };
-      is_admin: { Args: { _user_id?: string }; Returns: boolean };
-      promote_user_to_admin: { Args: { p_user_id: string }; Returns: undefined };
-      toggle_material_like: {
-        Args: { p_material_id: string };
+
+      is_admin: {
+        Args: {
+          _user_id?: string;
+        };
         Returns: boolean;
       };
+
+      promote_user_to_admin: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: undefined;
+      };
+
+      toggle_material_like: {
+        Args: {
+          p_material_id: string;
+        };
+        Returns: boolean;
+      };
+
+      publish_study_pack_atomic: {
+        Args: {
+          p_caller_id: string;
+          p_document_model: Json;
+          p_extraction_confidence: number;
+          p_generation_source?: string;
+          p_grounding_confidence: number;
+          p_material_id: string;
+          p_material_type: string;
+        };
+        Returns: string;
+      };
     };
+
     Enums: {
-      app_role: "admin" | "lecturer" | "student";
-      material_status: "processing" | "ready" | "failed" | "catalog_only";
-      request_status: "open" | "fulfilled" | "closed";
+      app_role:
+        | "admin"
+        | "lecturer"
+        | "student";
+
+      material_status:
+        | "processing"
+        | "ready"
+        | "failed"
+        | "catalog_only";
+
+      request_status:
+        | "open"
+        | "fulfilled"
+        | "closed";
     };
+
     CompositeTypes: {
       [_ in never]: never;
     };
   };
 };
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">;
+type DatabaseWithoutInternals =
+  Omit<
+    Database,
+    "__InternalSupabase"
+  >;
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">];
+type DefaultSchema =
+  DatabaseWithoutInternals[
+    Extract<
+      keyof Database,
+      "public"
+    >
+  ];
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    | keyof (
+        DefaultSchema["Tables"] &
+          DefaultSchema["Views"]
+      )
+    | {
+        schema: keyof DatabaseWithoutInternals;
+      },
+  TableName extends (
+    DefaultSchemaTableNameOrOptions extends {
+      schema: keyof DatabaseWithoutInternals;
+    }
+      ? keyof (
+          DatabaseWithoutInternals[
+            DefaultSchemaTableNameOrOptions["schema"]
+          ]["Tables"] &
+            DatabaseWithoutInternals[
+              DefaultSchemaTableNameOrOptions["schema"]
+            ]["Views"]
+        )
+      : never
+  ) = never,
+> =
+  DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never) = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
-  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R;
-    }
-    ? R
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] & DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+    ? (
+        DatabaseWithoutInternals[
+          DefaultSchemaTableNameOrOptions["schema"]
+        ]["Tables"] &
+          DatabaseWithoutInternals[
+            DefaultSchemaTableNameOrOptions["schema"]
+          ]["Views"]
+      )[TableName] extends {
         Row: infer R;
       }
       ? R
       : never
-    : never;
+    : DefaultSchemaTableNameOrOptions extends keyof (
+          DefaultSchema["Tables"] &
+            DefaultSchema["Views"]
+        )
+      ? (
+          DefaultSchema["Tables"] &
+            DefaultSchema["Views"]
+        )[DefaultSchemaTableNameOrOptions] extends {
+          Row: infer R;
+        }
+        ? R
+        : never
+      : never;
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    | keyof DefaultSchema["Tables"]
+    | {
+        schema: keyof DatabaseWithoutInternals;
+      },
+  TableName extends (
+    DefaultSchemaTableNameOrOptions extends {
+      schema: keyof DatabaseWithoutInternals;
+    }
+      ? keyof DatabaseWithoutInternals[
+          DefaultSchemaTableNameOrOptions["schema"]
+        ]["Tables"]
+      : never
+  ) = never,
+> =
+  DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I;
-    }
-    ? I
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    ? DatabaseWithoutInternals[
+        DefaultSchemaTableNameOrOptions["schema"]
+      ]["Tables"][TableName] extends {
         Insert: infer I;
       }
       ? I
       : never
-    : never;
+    : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+      ? DefaultSchema["Tables"][
+          DefaultSchemaTableNameOrOptions
+        ] extends {
+          Insert: infer I;
+        }
+        ? I
+        : never
+      : never;
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    | keyof DefaultSchema["Tables"]
+    | {
+        schema: keyof DatabaseWithoutInternals;
+      },
+  TableName extends (
+    DefaultSchemaTableNameOrOptions extends {
+      schema: keyof DatabaseWithoutInternals;
+    }
+      ? keyof DatabaseWithoutInternals[
+          DefaultSchemaTableNameOrOptions["schema"]
+        ]["Tables"]
+      : never
+  ) = never,
+> =
+  DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U;
-    }
-    ? U
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    ? DatabaseWithoutInternals[
+        DefaultSchemaTableNameOrOptions["schema"]
+      ]["Tables"][TableName] extends {
         Update: infer U;
       }
       ? U
       : never
-    : never;
+    : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+      ? DefaultSchema["Tables"][
+          DefaultSchemaTableNameOrOptions
+        ] extends {
+          Update: infer U;
+        }
+        ? U
+        : never
+      : never;
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
+    | keyof DefaultSchema["Enums"]
+    | {
+        schema: keyof DatabaseWithoutInternals;
+      },
+  EnumName extends (
+    DefaultSchemaEnumNameOrOptions extends {
+      schema: keyof DatabaseWithoutInternals;
+    }
+      ? keyof DatabaseWithoutInternals[
+          DefaultSchemaEnumNameOrOptions["schema"]
+        ]["Enums"]
+      : never
+  ) = never,
+> =
+  DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never) = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never;
+    ? DatabaseWithoutInternals[
+        DefaultSchemaEnumNameOrOptions["schema"]
+      ]["Enums"][EnumName]
+    : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+      ? DefaultSchema["Enums"][
+          DefaultSchemaEnumNameOrOptions
+        ]
+      : never;
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    keyof DefaultSchema["CompositeTypes"] | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
+    | keyof DefaultSchema["CompositeTypes"]
+    | {
+        schema: keyof DatabaseWithoutInternals;
+      },
+  CompositeTypeName extends (
+    PublicCompositeTypeNameOrOptions extends {
+      schema: keyof DatabaseWithoutInternals;
+    }
+      ? keyof DatabaseWithoutInternals[
+          PublicCompositeTypeNameOrOptions["schema"]
+        ]["CompositeTypes"]
+      : never
+  ) = never,
+> =
+  PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never) = never,
-> = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
-  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
-  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never;
+    ? DatabaseWithoutInternals[
+        PublicCompositeTypeNameOrOptions["schema"]
+      ]["CompositeTypes"][CompositeTypeName]
+    : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+      ? DefaultSchema["CompositeTypes"][
+          PublicCompositeTypeNameOrOptions
+        ]
+      : never;
 
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "lecturer", "student"],
-      material_status: ["processing", "ready", "failed", "catalog_only"],
-      request_status: ["open", "fulfilled", "closed"],
+      app_role: [
+        "admin",
+        "lecturer",
+        "student",
+      ],
+
+      material_status: [
+        "processing",
+        "ready",
+        "failed",
+        "catalog_only",
+      ],
+
+      request_status: [
+        "open",
+        "fulfilled",
+        "closed",
+      ],
     },
   },
 } as const;
